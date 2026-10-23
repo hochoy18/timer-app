@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "面板窗口的默认权限。前端是纯视图：显示/隐藏面板由 Rust 侧执行，因此不需要 window:allow-show / allow-hide 这类细粒度权限。",
+  "windows": ["main"],
+  "permissions": ["core:default", "notification:default"]
+}

@@ -1,0 +1,183 @@
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue",
+    Arial, sans-serif;
+  color: #1c1e21;
+  background: #f6f7f9;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  cursor: default;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.boot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  color: #868e96;
+  font-size: 13px;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: 14px 16px 16px;
+  background: #f6f7f9;
+}
+
+.panel-workAlerting {
+  background: #fff8e6;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: 0 0 auto;
+}
+
+.badge {
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: #e9ecef;
+  color: #495057;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.panel-workAlerting .badge {
+  background: #ffe3e3;
+  color: #c92a2a;
+}
+
+.icon-btn {
+  padding: 2px 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #868e96;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.icon-btn:hover {
+  background: #e9ecef;
+  color: #495057;
+}
+
+.stage {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  text-align: center;
+}
+
+.time {
+  font-size: 52px;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -1.5px;
+  font-variant-numeric: tabular-nums;
+  color: #111;
+}
+
+.time-paused {
+  color: #868e96;
+}
+
+.time-break {
+  color: #2f9e44;
+}
+
+.status-label {
+  margin-top: 2px;
+  color: #6c757d;
+  font-size: 13px;
+}
+
+.alert-box {
+  width: 100%;
+  padding: 18px 16px;
+  border: 1px solid #ffe066;
+  border-radius: 10px;
+  background: #fff3bf;
+}
+
+.alert-title {
+  margin: 0 0 6px;
+  color: #d9480f;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.alert-subtitle {
+  margin: 0;
+  color: #868e96;
+  font-size: 12px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 22px;
+}
+
+.btn {
+  padding: 8px 14px;
+  border: none;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-primary {
+  background: #228be6;
+  color: #fff;
+}
+
+.btn-primary:hover {
+  background: #1c7ed6;
+}
+
+.btn-secondary {
+  background: #dee2e6;
+  color: #343a40;
+}
+
+.btn-secondary:hover {
+  background: #ced4da;
+}
+
+.btn-ghost {
+  background: transparent;
+  color: #868e96;
+}
+
+.btn-ghost:hover {
+  background: #e9ecef;
+}
+
+.btn-block {
+  width: 100%;
+  margin-top: 20px;
+  padding: 11px 16px;
+}
