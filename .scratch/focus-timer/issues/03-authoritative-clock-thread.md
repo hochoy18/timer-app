@@ -9,7 +9,7 @@ Status: ready-for-agent
 ## 验收
 
 - [ ] `src-tauri/src/timer/clock.rs` 提供 `ClockThread`，启动后独立运行
-- [ ] 每 250ms 读取一次 `SystemTime::now()`，与 `target_ms` / `next_repeat_ms` 比较，构造相应 `Event` 送进状态机
+- [ ] 每 250ms 读取一次 `SystemTime::now()`，与 `deadline_ms` 比较，构造相应 `Event` 送进状态机
 - [ ] 状态机返回的副作用被分发执行（通知、音效、面板显示等）
 - [ ] 每次 tick 把最新 `TimerSnapshot`（见 [`spec.md` §5.3](../spec.md)）emit 给前端，**仅在状态或剩余秒数发生变化时**
 - [ ] 托盘标题每秒刷新一次（`MM:SS`），非秒级变化时不重复设置
@@ -19,5 +19,5 @@ Status: ready-for-agent
 ## 背景
 
 - 这是整个 app 的心跳来源；前端只做插值渲染，见 [ADR-0002](../../../../docs/adr/0002-authoritative-clock-in-rust.md)
-- 依赖 02 提供的 `TimerCore` 与 `reduce`
+- 依赖 02 提供的 `TimerCore` 与 `reduce`（**02 的字段已从 `target_ms` + `next_repeat_ms` 合并为单个 `deadline_ms`**，见该票 Comments）
 - 睡眠语义见 [`spec.md` §4.3](../spec.md)
