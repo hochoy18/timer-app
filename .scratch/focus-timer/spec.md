@@ -126,7 +126,7 @@ timer-app/
 
 ### 5.3 进程间通信
 
-**Rust → 前端**（event `timer://state`，仅状态变化时触发）：
+**Rust → 前端**（event `timer://state`，**状态或显示秒数变化时**触发；倒计时中即每秒一帧）：
 
 ```ts
 type TimerState = 'working' | 'paused' | 'workAlerting' | 'breaking'
@@ -139,16 +139,20 @@ interface TimerSnapshot {
 
 字段拆开而不是合成一个 `targetMs`，是因为暂停态的"目标"和计时态的"目标"含义不同——一个是绝对时刻，一个是剩余时长，混在一个数字里前端每次都要猜。用 `null` 而不是 `-1` 表示"没有倒计时"，是为了让"无倒计时"和"倒计时是 0"在类型上就分得开。`alerting` 不传：它是 `state === 'workAlerting'` 的推论，传冗余字段等于给两个真相。
 
+**每秒一帧而不是仅状态变化**：前端用自己的 `Date.now()` 算剩余，Rust 用 `SystemTime::now()`，两个时钟可能差几秒。每秒推一帧等于持续对时，前端每帧都能把显示拉回 Rust 的真值；改成仅状态变化就没有任何纠偏机制了，那点偏差会一直留在面板上。代价只是每秒一条 IPC 消息。
+
 **前端 → Rust**（`invoke("timer_action", { action })`），`action ∈ { "pause" | "resume" | "restart" | "acknowledge" }`。
 
-前端每 250ms 用本地 `setInterval` 做插值渲染：`remaining = max(0, targetMs - Date.now())`。
+前端每 250ms 用本地 `setInterval` 做插值渲染：`remaining = max(0, deadlineMs - Date.now())`。`deadlineMs` 为 `null`（提醒态）或暂停态时改用快照里的 `remainingMs`。
 
 ### 5.4 托盘
 
-- **标题**：剩余时间 `MM:SS`（`WORK_ALERTING` 时渲染为红色）
+- **标题**：剩余时间 `MM:SS`，超过 1 小时则 `H:MM:SS`（`WORK_ALERTING` 时渲染为红色）
 - **图标**：常态图标；`WORK_ALERTING` 时换醒目图标
 - **菜单**：`打开面板` / `暂停`（仅 `WORKING` 可用）/ `退出`
 - **左键点击**：显示面板（`show()` 但**不** `setFocus()`，不抢焦点）
+
+托盘标题与面板显示的剩余时间是同一个数字，因此 `format_remaining`（Rust）和 `formatDuration`（前端）必须遵守同一条规则：`≤ 60 分钟 → MM:SS`（60 分钟写作 `60:00`），`> 60 分钟 → H:MM:SS`。两份格式化器，改一处就要改另一处。
 
 ### 5.5 提醒
 

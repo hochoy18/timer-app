@@ -97,3 +97,11 @@ ClockThread（在 Tauri 状态表里）
 - **`event_for_action`（前端动作字符串 → `Event`）住在 `clock.rs`**，严格说它属于 IPC 层、该在 `lib.rs`。没搬是因为搬过去就要给 `lib.rs` 开一个 `#[cfg(test)]` 模块为一个纯函数，代价大于收益。它映射的是 `state.rs` 的 `Event`、被 `ClockThread::apply` 用，放哪儿都说得通。
 - **`dispatch()` 里"`SetTrayAlert` 最后生效"这句保证，落在 `state.rs` 的副作用顺序上**——谁在 `reduce` 里把 `SetTrayAlert` 往前挪，这句注释就悄悄过期了。真正由 `dispatch` 自己保证的只有"标题先于所有副作用"，这一半不依赖任何人。
 - **`action` 传的是 `String`**，未知动作在 `lib.rs` 里被静默丢掉（`event_for_action` 返回 `None`）。前端 `src/types.ts` 有 `TimerAction` 联合类型挡着，Rust 侧没有对应物。给 Rust 加一个 `serde` 枚举能拿到同样的类型安全，但那属于票 05/06 打磨 IPC 时的活，现在加是提前。
+
+### 2026-10-23（事后）— 上面第二、第六条已拍板
+
+**第二条（emit 规则）**：用户定了**保留本票的实现**，改 spec 与 ADR-0002 的措辞。理由是前端用 `Date.now()`、Rust 用 `SystemTime::now()`，两个时钟可能差几秒；每秒一帧相当于持续对时，改成仅状态变化就没有纠偏机制了。spec §5.3、ADR-0002 已改，顺带修掉了 §5.3 里残留的 `targetMs` 旧名。
+
+**第六条（两份格式化器）**：用户定了**两边统一成 `> 3600`**，前端 `formatDuration` 的阈值从 `> 60` 改成 `> 3600`，与 `format_remaining` 逐字一致。spec §5.4 补了一句"改一处就要改另一处"。
+
+跨语言对拍：用 Rust 侧已有的断言（`clock.rs` 里的 `59→00:59`、`60→01:00`、`3600→60:00`、`3601→1:00:01`、`3661→1:01:01`）跑前端 `formatDuration`，五项全对。
