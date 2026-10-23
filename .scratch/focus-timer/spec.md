@@ -129,13 +129,15 @@ timer-app/
 **Rust → 前端**（event `timer://state`，仅状态变化时触发）：
 
 ```ts
-type TimerState = 'WORKING' | 'PAUSED' | 'WORK_ALERTING' | 'BREAKING'
+type TimerState = 'working' | 'paused' | 'workAlerting' | 'breaking'
 interface TimerSnapshot {
   state: TimerState
-  targetMs: number      // 目标时刻（epoch ms）；暂停时为剩余毫秒数
-  alerting: boolean     // 是否处于待确认提醒
+  deadlineMs: number | null  // 当前阶段到期的绝对时刻（epoch ms）；无倒计时时为 null
+  remainingMs: number        // 仅 paused 有意义：冻结的剩余毫秒数
 }
 ```
+
+字段拆开而不是合成一个 `targetMs`，是因为暂停态的"目标"和计时态的"目标"含义不同——一个是绝对时刻，一个是剩余时长，混在一个数字里前端每次都要猜。用 `null` 而不是 `-1` 表示"没有倒计时"，是为了让"无倒计时"和"倒计时是 0"在类型上就分得开。`alerting` 不传：它是 `state === 'workAlerting'` 的推论，传冗余字段等于给两个真相。
 
 **前端 → Rust**（`invoke("timer_action", { action })`），`action ∈ { "pause" | "resume" | "restart" | "acknowledge" }`。
 
