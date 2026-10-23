@@ -1,6 +1,6 @@
 # 02 — Rust 纯函数状态机 + 单元测试
 
-Status: ready-for-human
+Status: resolved
 
 ## 目标
 
@@ -19,7 +19,7 @@ Status: ready-for-human
   - [x] `Pause` 只在 `Working` 下有效，在 `WorkAlerting` / `Breaking` 下是 no-op
   - [x] `AlertRepeat` 后下一次重复重新计算为 `now + 10m`
   - [x] 暂停冻结剩余时间，`Resume` 后 `deadline = now + remaining`
-- [x] 25 个用例全绿 —— 绕过 crates.io 用 `rustc --test` 单独编译跑通的，见 Comments
+- [x] 25 个用例全绿 —— `cargo test` 25 passed / 0 failed，见 Comments
 
 ## 背景
 
@@ -68,3 +68,16 @@ test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
 **这没证明什么**：`#[derive(serde::Serialize)]` 本身没被编译过（它要等 crates.io 通），也没做整包的 `cargo build`。这两件事仍然挂着。临时目录已删除，没有留在仓库里。
 
 crates.io 的绕行方案见票 01 的 Comments。
+
+### 2026-10-23（最后）— crates.io 通了，`cargo test` 原样全绿
+
+用户决定走 rsproxy 镜像（仅本项目）。网络一通，同一份代码、同一批用例：
+
+```
+running 25 tests
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+```
+
+之前那次 `rustc --test` 独立编译的结论被原样验证了 —— 说明绕过 cargo 的那次验证是可信的，不是巧合。
+
+**本票收口。** 22 个状态机用例覆盖 [`spec.md` §4.2](../spec.md) 转移表每一行，3 个配置用例锁住 60/15/10 默认值。下一个动作：票 03 让时钟线程来驱动这个状态机。

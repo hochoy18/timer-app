@@ -1,0 +1,9 @@
+# crates.io 在本网络下不可达（index.crates.io 超时、crates.io 返回 403），
+# 因此依赖走 rsproxy.cn 镜像。只作用于本项目，不影响机器上其他 Rust 工程。
+#
+# 回退：删掉这个文件。
+[source.crates-io]
+replace-with = 'rsproxy-sparse'
+
+[source.rsproxy-sparse]
+registry = "sparse+https://rsproxy.cn/index/"

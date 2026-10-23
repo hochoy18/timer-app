@@ -1,6 +1,6 @@
 # 01 — 初始化 Tauri 2 + React + TS 工程骨架
 
-Status: ready-for-human
+Status: resolved
 
 ## 目标
 
@@ -14,7 +14,8 @@ Status: ready-for-human
 - [x] `capabilities/default.json` 含 `core:default` 与 `notification:default` 相关权限
 - [x] 图标齐备（`scripts/generate-icons.py` 生成 `.icns` / `.ico` / 托盘模板图）
 - [x] 前端侧通过校验：`npm run typecheck` 与 `npm run build` 均通过
-- [ ] `npm run tauri dev` 成功，`cargo build` 无警告阻塞 ← **被工具链阻塞**
+- [x] `cargo build` 通过且**零警告**
+- [x] `npm run tauri dev` 成功起起来，进程稳定运行 60 秒无 panic
 - [ ] 托盘图标能在菜单栏显示，左键点击可显示/隐藏窗口 ← 归 04 托盘
 - [ ] 窗口关闭按钮只隐藏窗口，不退出应用 ← 归 06 面板
 - [ ] 圆角透明窗口（`macOSPrivateApi` + `transparent`）← 归 06 面板
@@ -65,3 +66,22 @@ Caused by: transfer too slow: failed to transfer more than 10 bytes in 30s
 **待用户决定**：把 cargo registry 换成镜像。这等于让所有 Rust 依赖的二进制产物来自第三方而非 crates.io 官方 —— 是供应链信任问题，而且作用域是全局（`~/.cargo/config.toml`，影响这台机器上所有 Rust 项目）还是仅本项目（`src-tauri/.cargo/config.toml`）也需要定。
 
 在解决之前，本票剩下两条（`cargo build` 无警告阻塞、`npm run tauri dev`）无法验证。
+
+### 2026-10-23（再后）— 走 rsproxy 镜像，全绿，本票收口
+
+用户决定换镜像、且只作用于本项目。`src-tauri/.cargo/config.toml` 里把 crates.io 换成 `sparse+https://rsproxy.cn/index/`，提交进仓库（删掉该文件即可回退）。
+
+换完之后一切正常：
+
+```
+cargo test    →  25 passed; 0 failed        （1m49s 编译完整 Tauri 依赖栈）
+cargo build   →  Finished dev profile，零警告
+npm run tauri dev
+               →  VITE ready in 231ms
+                  cargo run → target/debug/focus-timer
+                  进程稳定运行 60 秒，无 panic、无 webview 报错
+```
+
+`target/debug/focus-timer` 32 MB（debug 未裁剪，正常）。
+
+**本票收口。** 剩下的三条不是没做，是本来就属于别的票：托盘归 04，窗口关闭处理与圆角透明窗口归 06。
