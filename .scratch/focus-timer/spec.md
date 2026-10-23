@@ -179,12 +179,22 @@ interface TimerSnapshot {
 
 ## 7. 环境准备
 
-当前机器**缺 Rust 和 Tauri CLI**，是唯一的硬阻塞：
+当前机器**缺 Rust 和 Tauri CLI**，是唯一的硬阻塞。
+
+**推荐做法**：跑仓库里自带的向导脚本，它会分阶段检查、确认、安装并验证：
+
+```bash
+./scripts/setup-toolchain.sh
+```
+
+脚本做两件会改动系统的事：安装 rustup 与全局 npm 包；向 `~/.zshrc` 追加一行 cargo 的 PATH（仅当尚未存在）。可重复运行。
+
+**手动等价命令**：
 
 ```bash
 # 1. Rust
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-# 重启终端使 ~/.cargo/bin 进入 PATH
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+# 重开终端使 ~/.cargo/bin 进入 PATH
 
 # 2. Tauri CLI
 npm i -g @tauri-apps/cli
