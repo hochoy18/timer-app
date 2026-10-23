@@ -38,23 +38,31 @@ pub trait Dispatcher: Send + Sync + 'static {
     fn play_sound(&self);
     /// 显示并置顶面板。**不得抢焦点**。
     fn show_panel(&self);
-    /// 设置托盘的提醒态样式（醒目图标 + 红色剩余时间）。
+    /// 设置托盘的提醒态样式（醒目图标）。
     fn set_tray_alert(&self, alerting: bool);
     /// 设置托盘标题（剩余时间）。
     fn set_tray_title(&self, title: &str);
+    /// 告知当前状态，托盘据此决定哪些菜单项可用。
+    ///
+    /// 与 `set_tray_alert` 分开是因为两者答的不是同一个问题：副作用说的是
+    /// "刚刚进了 / 退了提醒态"（据此换图标），而菜单要的是"现在站在哪个状态"
+    /// （据此决定 `暂停` 能不能点）。两者总是一起变，托盘不必自己去推。
+    fn set_state(&self, state: TimerState);
     /// 把快照推给前端。
     fn emit_state(&self, snapshot: &TimerSnapshot);
 }
 
 /// 一次 tick 对外的输出。
 ///
-/// 三个字段都是"有才发"：没变化的就不惊动前端、也不重复设置托盘。
+/// 四个字段都是"有才发"：没变化的就不惊动前端、也不重复设置托盘。
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TickOutput {
     /// 要推给前端的快照。状态、剩余秒数、截止时刻都没变时为 `None`。
     pub snapshot: Option<TimerSnapshot>,
     /// 要设到托盘上的标题。标题文本没变时为 `None`。
     pub tray_title: Option<String>,
+    /// 状态机状态。状态没变时为 `None`。
+    pub state: Option<TimerState>,
     /// 状态机产生的副作用。
     pub effects: Vec<Effect>,
 }
@@ -68,6 +76,8 @@ struct Sent {
     seconds: Option<u64>,
     /// 上次设到托盘上的标题。
     title: Option<String>,
+    /// 上次告知托盘的状态。
+    state: Option<TimerState>,
 }
 
 /// 计时引擎：持有状态机，并记住"上次给前端、给托盘发过什么"。
@@ -134,7 +144,10 @@ impl TimerEngine {
     fn publish(&mut self, now: u64, effects: Vec<Effect>) -> TickOutput {
         let snapshot = self.core.snapshot();
         let seconds = display_seconds(&self.core, now);
-        let title = format_remaining(seconds);
+        // 提醒态由当前状态直接推出来。它与 `Effect::SetTrayAlert` 总在同一批里
+        // 进出（工作到期发 true，确认 / 休息结束发 false），所以标题上的红点和
+        // 换图标不会各说各话。
+        let title = title_for(seconds, self.core.state == TimerState::WorkAlerting);
 
         // 状态、截止时刻、剩余秒数里任何一样变了才推快照。
         // 倒计时状态每秒推一帧（秒数变了），其余时候安静待着。
@@ -156,9 +169,18 @@ impl TimerEngine {
             None
         };
 
+        // 状态没变就不惊动托盘去重建菜单。
+        let state_out = if self.sent.state != Some(self.core.state) {
+            self.sent.state = Some(self.core.state);
+            Some(self.core.state)
+        } else {
+            None
+        };
+
         TickOutput {
             snapshot: snapshot_out,
             tray_title: title_out,
+            state: state_out,
             effects,
         }
     }
@@ -173,6 +195,36 @@ fn display_seconds(core: &TimerCore, now: u64) -> u64 {
         _ => core.remaining_ms(now),
     };
     ms.saturating_add(999) / 1000
+}
+
+/// 提醒态标题前缀的红点。
+///
+/// 规格要的是"提醒时托盘上的时间变红"，但 Tauri 2 这条路走不通：`tauri` /
+/// `tray-icon` / `muda` 一路下来都没有 status item 标题着色的 API，托盘标题只有
+/// `set_title(text)` 一种写法。
+///
+/// 逃逸口是有的——`TrayIcon::with_inner_tray_icon` 能摸到内层的
+/// `tray_icon::TrayIcon`，进而拿到 `NSStatusItem`，用 `attributedTitle` 的
+/// `foregroundColor` 可以把数字真正染红。但那要把 `objc2-app-kit` 提成直接依赖、
+/// 并耦合到 `tray-icon` 的内部结构（Tauri 自己的文档就提醒过 tray-icon 会在小
+/// 版本里动），不划算。
+///
+/// 所以改用 Apple Color Emoji 的红圆点：菜单栏文本按彩色渲染 emoji，菜单栏里因此
+/// 真的多出一个红色元素，而数字本身仍跟随菜单栏明暗。这是"够醒目"里最省事、
+/// 也最不容易悄悄失效的做法。
+const ALERT_MARK: &str = "🔴";
+
+/// 托盘标题文案。
+///
+/// 数字部分交给 [`format_remaining`]——它和前端的 `formatDuration` 是同一条规则：
+/// 托盘标题和面板显示的是同一个数，两边必须一致。提醒态只是在前面加个红点。
+fn title_for(seconds: u64, alerting: bool) -> String {
+    let text = format_remaining(seconds);
+    if alerting {
+        format!("{ALERT_MARK} {text}")
+    } else {
+        text
+    }
 }
 
 /// 把秒数格式化成托盘标题。
@@ -228,12 +280,16 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 ///
 /// 顺序有讲究：
 ///
-/// 1. 先设托盘标题、先推前端快照——否则面板弹出来时，前端手里还拿着上一帧状态；
+/// 1. 先设托盘标题、先告知状态、先推前端快照——否则面板弹出来时，前端手里还拿着
+///    上一帧状态，托盘的菜单也还按上一状态亮着；
 /// 2. 再触发通知/音效/面板；
-/// 3. 提醒态样式（`SetTrayAlert`）最后生效——它要盖过刚设上去的标题颜色。
+/// 3. 提醒态样式（`SetTrayAlert`）最后生效。
 fn dispatch(out: TickOutput, dispatcher: &dyn Dispatcher) {
     if let Some(title) = &out.tray_title {
         dispatcher.set_tray_title(title);
+    }
+    if let Some(state) = out.state {
+        dispatcher.set_state(state);
     }
     if let Some(snapshot) = &out.snapshot {
         dispatcher.emit_state(snapshot);
@@ -348,9 +404,13 @@ impl ClockThread {
     /// Dispatcher → AppHandle`）——这条引用链成环，`Drop` 永远等不到。
     /// 单元测试里没有这个环，所以测试绿了不代表退出时线程会收干净。
     ///
-    /// 等线程结束最多等一个心跳，超时就算了。分发副作用要经 Tauri 的事件循环，
-    /// 万一那一刻它恰好在等主线程，而调用方自己就是主线程，`join` 就会互锁——
-    /// 退出时宁可放过一个线程，也不能把 app 卡在关不掉的状态。
+    /// 等线程结束最多等一个心跳，超时就算了。
+    ///
+    /// 票 03 写这段时，`join` 会互锁是真会发生的：分发要经 Tauri 的事件循环，
+    /// 那时它正可能等主线程，而调用方自己就是主线程。票 04 把托盘 / 窗口那一层
+    /// 改成了只投递、不等待，这一条基本被解掉了——但 `emit_state` 仍走事件循环，
+    /// 且主线程一旦真的停住，投出去的东西就没人执行了。所以这里保留"等一个心跳就
+    /// 放弃"：退出时宁可放过一个线程，也不能把 app 卡在关不掉的状态。
     pub fn stop(&self) {
         self.stop.stop();
         let deadline = Instant::now() + TICK_INTERVAL;
@@ -444,6 +504,7 @@ mod tests {
         ShowPanel,
         SetTrayAlert(bool),
         SetTrayTitle(String),
+        SetState(TimerState),
         EmitState(TimerSnapshot),
     }
 
@@ -457,6 +518,16 @@ mod tests {
                 .into_iter()
                 .filter_map(|c| match c {
                     Call::SetTrayTitle(t) => Some(t),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        fn states(&self) -> Vec<TimerState> {
+            self.calls()
+                .into_iter()
+                .filter_map(|c| match c {
+                    Call::SetState(s) => Some(s),
                     _ => None,
                 })
                 .collect()
@@ -503,6 +574,10 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push(Call::SetTrayTitle(title.to_string()));
+        }
+
+        fn set_state(&self, state: TimerState) {
+            self.calls.lock().unwrap().push(Call::SetState(state));
         }
 
         fn emit_state(&self, snapshot: &TimerSnapshot) {
@@ -640,9 +715,57 @@ mod tests {
         let mut engine = TimerEngine::new(0, cfg());
         // 提醒态的标题是 00:00，不是"距离下一次重复提醒还有多久"。
         let out = engine.tick(60 * MIN);
-        assert_eq!(out.tray_title.unwrap(), "00:00");
+        assert_eq!(out.tray_title.unwrap(), "🔴 00:00");
         let snapshot = engine.snapshot();
         assert_eq!(snapshot.deadline_ms, None);
+    }
+
+    #[test]
+    fn the_tray_title_carries_the_alert_marker_only_while_alerting() {
+        let mut engine = TimerEngine::new(0, cfg());
+        assert_eq!(engine.tick(0).tray_title.unwrap(), "60:00");
+        // 到点：标题带上红点。
+        assert_eq!(engine.tick(60 * MIN).tray_title.unwrap(), "🔴 00:00");
+        // 确认去休息：红点撤掉，标题回到休息时段的剩余时间。
+        engine.apply(Event::Acknowledge, 60 * MIN);
+        assert_eq!(engine.tick(61 * MIN).tray_title.unwrap(), "14:00");
+    }
+
+    // ── 引擎：菜单可用性 ───────────────────────────────────────────────
+
+    #[test]
+    fn the_tray_is_told_about_the_state_only_when_it_changes() {
+        let mut engine = TimerEngine::new(0, cfg());
+        // 第一帧就把初始状态送出去，托盘菜单一开始就是对的。
+        assert_eq!(engine.tick(0).state, Some(TimerState::Working));
+        // 还在工作：不再重复说。
+        assert_eq!(engine.tick(1_000).state, None);
+        assert_eq!(engine.tick(30 * MIN).state, None);
+        // 暂停是一次状态变化。
+        assert_eq!(
+            engine.apply(Event::Pause, 30 * MIN).state,
+            Some(TimerState::Paused)
+        );
+        assert_eq!(engine.tick(30 * MIN + 100).state, None);
+    }
+
+    #[test]
+    fn every_state_the_engine_lands_in_is_announced_once() {
+        // 托盘的 `暂停` 灰不灰，全看这条通知。到点前忘了发，菜单就会一直亮着。
+        let mut engine = TimerEngine::new(0, cfg());
+        let mut announced = vec![engine.tick(0).state];
+        announced.push(engine.tick(60 * MIN).state);
+        announced.push(engine.apply(Event::Acknowledge, 60 * MIN).state);
+        announced.push(engine.tick(75 * MIN).state);
+        assert_eq!(
+            announced,
+            vec![
+                Some(TimerState::Working),
+                Some(TimerState::WorkAlerting),
+                Some(TimerState::Breaking),
+                Some(TimerState::Working),
+            ]
+        );
     }
 
     #[test]
@@ -654,6 +777,43 @@ mod tests {
         // 超过一小时：`H:MM:SS`。
         assert_eq!(format_remaining(3_601), "1:00:01");
         assert_eq!(format_remaining(3_661), "1:01:01");
+    }
+
+    #[test]
+    fn the_alerting_title_is_prefixed_with_a_red_dot() {
+        // 数字规则不变，只是前面多了红点。
+        assert_eq!(title_for(0, true), "🔴 00:00");
+        assert!(title_for(0, true).ends_with(&format_remaining(0)));
+    }
+
+    #[test]
+    fn the_alert_marker_goes_away_once_the_alert_ends() {
+        // 确认休息后托盘必须回到常态样式，不能留着红点继续吓人。
+        assert_eq!(title_for(900, false), "15:00");
+        assert!(!title_for(900, false).contains(ALERT_MARK));
+    }
+
+    #[test]
+    fn the_menu_is_told_about_the_state_before_the_panel_pops_up() {
+        // 分发的顺序是有讲究的：菜单先按新状态重建，面板才弹出来。反过来的话，
+        // 面板弹出的一瞬间菜单还按上一状态亮着——提醒态里 `暂停` 会多亮一拍。
+        let dispatcher = FakeDispatcher::default();
+        let mut engine = TimerEngine::new(0, cfg());
+        engine.tick(0);
+        dispatcher.calls.lock().unwrap().clear();
+
+        dispatch(engine.tick(60 * MIN), &dispatcher);
+
+        let calls = dispatcher.calls();
+        let state_at = calls
+            .iter()
+            .position(|c| matches!(c, Call::SetState(TimerState::WorkAlerting)))
+            .expect("提醒态必须告知托盘，否则菜单的 `暂停` 不会置灰");
+        let panel_at = calls
+            .iter()
+            .position(|c| matches!(c, Call::ShowPanel))
+            .expect("工作到期必须弹面板");
+        assert!(state_at < panel_at, "顺序反了：{calls:?}");
     }
 
     // ── 引擎：用户动作 ─────────────────────────────────────────────────
@@ -790,6 +950,31 @@ mod tests {
         assert_eq!(titles[1], "59:59");
         // 两次设置之间至少隔了一秒——没有在 250ms 的心跳上反复刷同一个标题。
         assert!(titles.len() <= 4, "标题刷新得太频繁：{titles:?}");
+        drop(clock);
+    }
+
+    #[test]
+    fn the_thread_tells_the_tray_which_state_it_is_in() {
+        // 托盘菜单的可用性挂在这条通知上，所以它得跟着线程一起跑。
+        let dispatcher = Arc::new(FakeDispatcher::default());
+        let cfg = TimerConfig {
+            work_ms: 50,
+            break_ms: 50,
+            repeat_ms: 1_000,
+        };
+        let clock = ClockThread::start_with_interval(
+            Arc::clone(&dispatcher) as Arc<dyn Dispatcher>,
+            cfg,
+            Duration::from_millis(5),
+        );
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while dispatcher.states().len() < 2 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            dispatcher.states(),
+            vec![TimerState::Working, TimerState::WorkAlerting]
+        );
         drop(clock);
     }
 

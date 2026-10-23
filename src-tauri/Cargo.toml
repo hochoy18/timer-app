@@ -13,7 +13,9 @@ crate-type = ["lib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+# `image-png` 是运行时把 `icons/tray*.png` 解成 `Image` 用的（托盘图标要在
+# 常态 / 提醒态之间切，两张都得带进二进制）。
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-notification = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

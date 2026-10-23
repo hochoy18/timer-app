@@ -147,12 +147,14 @@ interface TimerSnapshot {
 
 ### 5.4 托盘
 
-- **标题**：剩余时间 `MM:SS`，超过 1 小时则 `H:MM:SS`（`WORK_ALERTING` 时渲染为红色）
-- **图标**：常态图标；`WORK_ALERTING` 时换醒目图标
-- **菜单**：`打开面板` / `暂停`（仅 `WORKING` 可用）/ `退出`
-- **左键点击**：显示面板（`show()` 但**不** `setFocus()`，不抢焦点）
+- **标题**：剩余时间 `MM:SS`，超过 1 小时则 `H:MM:SS`（`WORK_ALERTING` 时前缀一个红点 `🔴`）
+- **图标**：常态图标（模板图，跟随菜单栏明暗）；`WORK_ALERTING` 时换醒目图标（彩色，不走模板）
+- **菜单**：`打开面板` / `暂停`（仅 `WORKING` 可用）/ `退出`。菜单里的"打开面板"与左键点击是同一个动作——面板已显示就收起来（面板自己的 ✕ 要等票 06 才落地，托盘得先能把它收回去）
+- **左键点击**：面板已显示则隐藏，未显示则显示（`show()` 但**不** `setFocus()`，不抢焦点）
 
 托盘标题与面板显示的剩余时间是同一个数字，因此 `format_remaining`（Rust）和 `formatDuration`（前端）必须遵守同一条规则：`≤ 60 分钟 → MM:SS`（60 分钟写作 `60:00`），`> 60 分钟 → H:MM:SS`。两份格式化器，改一处就要改另一处。
+
+提醒态的"红"用前缀红点而不是把数字染红：Tauri 2 这条路走不通，`tauri` / `tray-icon` / `muda` 一路下来都没有 status item 标题着色的 API。逐字染红要经 `TrayIcon::with_inner_tray_icon` 摸进 `NSStatusItem`，代价是把 `objc2-app-kit` 提成直接依赖并耦合 `tray-icon` 的内部结构。见 [`issues/04`](./issues/04-tray-menu-and-alert-style.md) 的 Comments。
 
 ### 5.5 提醒
 
