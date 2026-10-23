@@ -19,7 +19,7 @@ Status: ready-for-human
   - [x] `Pause` 只在 `Working` 下有效，在 `WorkAlerting` / `Breaking` 下是 no-op
   - [x] `AlertRepeat` 后下一次重复重新计算为 `now + 10m`
   - [x] 暂停冻结剩余时间，`Resume` 后 `deadline = now + remaining`
-- [ ] `cargo test` 全绿（22 个状态机用例 + 3 个配置用例已写好，**但一次都没跑过**——见 Comments）
+- [x] 25 个用例全绿 —— 绕过 crates.io 用 `rustc --test` 单独编译跑通的，见 Comments
 
 ## 背景
 
@@ -51,3 +51,20 @@ cd src-tauri && cargo test
 
 - **非法事件组合一律是空转移。** `(Paused, WorkElapsed)`、`(Working, Acknowledge)` 之类既不改状态也不发副作用。这让 03 的时钟线程可以放心地"随时问一次"，不需要在调用前判断当前是什么状态。
 - **重复提醒没有次数上限，也没有"跨过多个间隔就补发几次"的逻辑。** 休眠 8 小时后唤醒，只重发一次，10 分钟后再来下一次，而不是一口气把睡过去的时间补成 48 次。这是对的行为：`a_long_sleep_still_triggers_the_work_alert` 锁住了它。
+
+### 2026-10-23（稍后）— 25 个用例全绿，但没走 cargo
+
+工具链装好后 `cargo test` 直接死在网络上：这台机器连不上 crates.io（`index.crates.io` 超时，`crates.io` 返回 403）。
+
+但状态机**不依赖任何 crate** —— `config.rs` 零依赖，`state.rs` 唯一的外部依赖是 `serde` 的 `Serialize` derive，而那个 derive 只服务于 IPC 序列化，测试一次都没碰过。所以把两个文件拷到临时目录、剥掉 serde 那两行、`rustc --edition 2021 --test` 单独编译：
+
+```
+running 25 tests
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+```
+
+**这证明了什么**：状态机逻辑编译无误、25 个用例全部通过，包括 22 个覆盖 [`spec.md` §4.2](../spec.md) 转移表每一行的用例。
+
+**这没证明什么**：`#[derive(serde::Serialize)]` 本身没被编译过（它要等 crates.io 通），也没做整包的 `cargo build`。这两件事仍然挂着。临时目录已删除，没有留在仓库里。
+
+crates.io 的绕行方案见票 01 的 Comments。

@@ -41,3 +41,27 @@ cd src-tauri && cargo build
 有报错回来改，改完把上面那三条未勾的补上，`Status` 改成 `resolved`。
 
 原验收里的 `macOSPrivateApi: true` 挪到了 06：单独打开这个开关而窗口不开 `transparent` 没有任何效果，两者要一起才有意义，而透明窗口是能构建成功还是要跑一次才知道的事——在 Rust 还没装、无法验证的情况下先不赌。
+
+### 2026-10-23（稍后）— 工具链装好了，但 crates.io 连不上
+
+`cargo test` 跑起来了，失败在网络上，不是代码上：
+
+```
+error: failed to get `serde` as a dependency of package `focus-timer`
+Caused by: unable to update registry `crates-io`
+Caused by: transfer too slow: failed to transfer more than 10 bytes in 30s
+```
+
+直连确认：`index.crates.io` 25 秒超时、`static.crates.io` 25 秒超时、`crates.io` 返回 403。这是网络出口的问题，不是本项目的问题——**依赖一个 crate 都拉不下来**。
+
+镜像站都通，快慢差很多：
+
+| 镜像 | 响应 |
+|---|---|
+| `rsproxy.cn` | 200，0.13s |
+| `mirrors.ustc.edu.cn` | 200，0.20s |
+| `mirrors.tuna.tsinghua.edu.cn` | 200，0.88s |
+
+**待用户决定**：把 cargo registry 换成镜像。这等于让所有 Rust 依赖的二进制产物来自第三方而非 crates.io 官方 —— 是供应链信任问题，而且作用域是全局（`~/.cargo/config.toml`，影响这台机器上所有 Rust 项目）还是仅本项目（`src-tauri/.cargo/config.toml`）也需要定。
+
+在解决之前，本票剩下两条（`cargo build` 无警告阻塞、`npm run tauri dev`）无法验证。
