@@ -257,6 +257,53 @@ mod tests {
         t.effects.contains(&e)
     }
 
+    /// 取出一次转移里的通知文案（标题，正文）。
+    fn notify_text(t: &Transition) -> Option<(&'static str, &'static str)> {
+        t.effects.iter().find_map(|e| match e {
+            Effect::Notify { title, body } => Some((*title, *body)),
+            _ => None,
+        })
+    }
+
+    /// 提醒的完整路径：工作时段结束 → 重复提醒 → 确认休息 → 休息时段结束。
+    ///
+    /// 走完整路径而不是直接摆状态：这样文案和触发它的时机不会走散。
+    /// 「确认休息」也在里面：spec §5.5 说它既不通知也不出声——提醒已经响过了，
+    /// 用户刚回应过，这时候再顶一下是吵。
+    struct ReminderPath {
+        /// 工作时段结束。
+        work: Transition,
+        /// 10 分钟未确认，重复提醒。
+        repeat: Transition,
+        /// 用户确认去休息。
+        acknowledged: Transition,
+        /// 休息时段结束。
+        break_end: Transition,
+    }
+
+    fn the_reminder_path() -> ReminderPath {
+        let work = step(&TimerCore::start(0, &cfg()), Event::WorkElapsed, 60 * MIN);
+        let repeat = step(&work.core, Event::AlertRepeat, 70 * MIN);
+        let acknowledged = step(&repeat.core, Event::Acknowledge, 70 * MIN);
+        let break_end = step(&acknowledged.core, Event::BreakElapsed, 85 * MIN);
+        ReminderPath {
+            work,
+            repeat,
+            acknowledged,
+            break_end,
+        }
+    }
+
+    /// 三次提醒（不含「确认休息」）。
+    fn the_reminders(path: &ReminderPath) -> [&Transition; 3] {
+        [&path.work, &path.repeat, &path.break_end]
+    }
+
+    /// 是不是一个汉字。
+    fn is_han(c: char) -> bool {
+        ('\u{4e00}'..='\u{9fff}').contains(&c)
+    }
+
     // ── 启动 ────────────────────────────────────────────────────────────
 
     #[test]
@@ -517,5 +564,77 @@ mod tests {
         c.work_ms = 42;
         let core = TimerCore::start(0, &c);
         assert_eq!(core.deadline_ms, 42);
+    }
+
+    // ── 提醒的文案与音效 ────────────────────────────────────────────────
+
+    #[test]
+    fn every_reminder_notifies_and_plays_a_sound() {
+        // 三个时机（工作时段结束 / 10 分钟重复提醒 / 休息时段结束）都得又通知
+        // 又出声——漏了哪一个，那个时机就只剩面板在提醒。
+        let path = the_reminder_path();
+        for (i, t) in the_reminders(&path).into_iter().enumerate() {
+            assert!(notify_text(t).is_some(), "第 {i} 次提醒没有通知");
+            assert!(has_effect(t, Effect::PlaySound), "第 {i} 次提醒没有音效");
+        }
+    }
+
+    #[test]
+    fn acknowledging_the_reminder_is_silent() {
+        // spec §5.5 的提醒矩阵里，「确认休息」那一行的通知和音效都是「—」。
+        // 提醒刚响过，用户已经回应过了，这时候再顶一下是吵。
+        let path = the_reminder_path();
+        assert!(
+            notify_text(&path.acknowledged).is_none(),
+            "确认休息不该再发通知"
+        );
+        assert!(
+            !has_effect(&path.acknowledged, Effect::PlaySound),
+            "确认休息不该再出声"
+        );
+    }
+
+    #[test]
+    fn the_notification_copy_is_chinese() {
+        let path = the_reminder_path();
+        for t in the_reminders(&path) {
+            let (title, body) = notify_text(t).expect("提醒必须带文案");
+            assert!(title.chars().any(is_han), "标题不是中文：{title}");
+            assert!(body.chars().any(is_han), "正文不是中文：{body}");
+        }
+    }
+
+    #[test]
+    fn each_reminder_names_the_moment_it_fires_for() {
+        // 三套话得能一眼分清是哪个时机：不然"休息结束"也写成"工作时间到"，
+        // 用户根本不知道自己该干嘛。
+        //
+        // 这里写死字面量，而不是用 `WORK_ALERT_TITLE` 那几个常量：这条用例问的
+        // 是"**用户看到的**是不是这句话"，常量自己跟自己比是问不出什么的。
+        let path = the_reminder_path();
+        assert_eq!(notify_text(&path.work).unwrap().0, "工作时间到");
+        assert_eq!(notify_text(&path.repeat).unwrap().0, "还在工作？");
+        assert_eq!(notify_text(&path.break_end).unwrap().0, "休息结束");
+    }
+
+    #[test]
+    fn the_three_reminders_do_not_repeat_the_same_copy() {
+        let path = the_reminder_path();
+        let titles = [
+            notify_text(&path.work).unwrap().0,
+            notify_text(&path.repeat).unwrap().0,
+            notify_text(&path.break_end).unwrap().0,
+        ];
+        let bodies = [
+            notify_text(&path.work).unwrap().1,
+            notify_text(&path.repeat).unwrap().1,
+            notify_text(&path.break_end).unwrap().1,
+        ];
+        for i in 0..titles.len() {
+            for j in (i + 1)..titles.len() {
+                assert_ne!(titles[i], titles[j], "两个时机的标题撞了");
+                assert_ne!(bodies[i], bodies[j], "两个时机的正文撞了");
+            }
+        }
     }
 }

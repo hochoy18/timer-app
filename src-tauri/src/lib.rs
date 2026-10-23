@@ -1,12 +1,14 @@
 pub mod config;
+pub mod notify;
 pub mod timer;
 pub mod tray;
 
 use std::sync::Arc;
 
-use tauri::{AppHandle, Emitter, Manager, RunEvent};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, Wry};
 
 use crate::config::TimerConfig;
+use crate::notify::Notifier;
 use crate::timer::clock::{event_for_action, ClockThread, Dispatcher};
 use crate::timer::state::{TimerSnapshot, TimerState};
 
@@ -23,16 +25,21 @@ use crate::timer::state::{TimerSnapshot, TimerState};
 /// 快照那一路例外：它走 `emit`，不走这条队列。
 struct TauriDispatcher {
     app: AppHandle,
+    /// 提醒出口（系统通知 + 系统音效）。
+    ///
+    /// 它自己也持有一份 `AppHandle`：`Notifier` 是个独立的小组件，得自己拿住
+    /// 句柄；而分发器要操作托盘，也需要一份。两个句柄是同一个 `Arc` 的克隆，
+    /// 多这一份不花钱。
+    notifier: Notifier<Wry>,
 }
 
 impl Dispatcher for TauriDispatcher {
     fn notify(&self, title: &str, body: &str) {
-        // 票 05：接系统通知（tauri-plugin-notification）与系统音效。
-        let _ = (title, body);
+        self.notifier.notify(title, body);
     }
 
     fn play_sound(&self) {
-        // 票 05：调 macOS 系统音效。
+        self.notifier.play_sound();
     }
 
     fn show_panel(&self) {
@@ -83,6 +90,7 @@ pub fn run() {
 
             let dispatcher = Arc::new(TauriDispatcher {
                 app: app.handle().clone(),
+                notifier: Notifier::new(app.handle().clone()),
             });
             let clock = ClockThread::start(dispatcher, TimerConfig::from_env_or_default());
             app.manage(clock);
