@@ -1,0 +1,219 @@
+# Focus Timer — 实现方案
+
+> 领域词汇：[`CONTEXT.md`](../../CONTEXT.md) · 架构决策：[`docs/adr/`](../../docs/adr/) · 实施票：[`issues/`](./issues/)
+
+## 1. 目标
+
+一个常驻 macOS 菜单栏的专注计时工具。启动即开始一个 **60 分钟工作时段**；到点提醒休息；**不确认则每 10 分钟重复提醒**；确认后进入 **15 分钟休息时段**；休息结束自动开启下一轮工作时段。
+
+## 2. 范围
+
+### 本期做
+
+- 常驻菜单栏（托盘），面板默认隐藏、点托盘图标或菜单唤出
+- 托盘实时显示剩余时间；提醒态下图标醒目 + 时间变红
+- 工作时段 / 休息时段 / 暂停 / 待确认提醒 四态面板
+- 系统通知 + 系统音效（Rust 侧发出）
+- 首次运行一次性引导 + 通知权限申请
+- 单实例
+- 打包成可安装的 `.app`
+
+### 本期不做
+
+| 不做 | 原因 |
+|---|---|
+| 开机自启 | 决策：暂不做，日后手动加登录项 |
+| 时长可配置 | 决策：先写死 60 / 15 / 10，改代码即可 |
+| 状态持久化 | [ADR-0003](../../docs/adr/0003-no-state-persistence.md) |
+| 跨平台 | 决策：仅 macOS |
+| 历史统计 / 番茄钟风格计数 | 不在本工具职责内 |
+
+## 3. 领域模型
+
+见 [`CONTEXT.md`](../../CONTEXT.md)。核心词汇：**工作时段**、**休息时段**、**轮次**、**暂停**、**提醒**、**待确认提醒**、**重复提醒**、**确认**、**面板**、**引导**。
+
+## 4. 状态机
+
+### 4.1 状态
+
+| 状态 | 含义 | 面板内容 | 面板按钮 |
+|---|---|---|---|
+| `WORKING` | 工作时段进行中 | 剩余倒计时 + "专注工作中" | 暂停、重新计时 |
+| `PAUSED` | 工作时段被暂停 | 冻结的剩余时间 + "已暂停" | 继续、重新计时 |
+| `WORK_ALERTING` | 待确认提醒 | "工作已满 1 小时" + "不确认则每 10 分钟重复提醒" | 马上去休息 15 分钟 |
+| `BREAKING` | 休息时段进行中 | 剩余倒计时 + "休息中" | 无 |
+
+应用启动即进入 `WORKING`，不存在可停留的空闲态。
+
+### 4.2 转移表
+
+| 当前状态 | 事件 | 下一状态 | 副作用 |
+|---|---|---|---|
+| —（启动） | `Start` | `WORKING` | `target = now + 60m`；托盘显示 `60:00`；首次运行显示引导 |
+| `WORKING` | `Pause` | `PAUSED` | 冻结 `remaining = target - now` |
+| `PAUSED` | `Resume` | `WORKING` | `target = now + remaining` |
+| `WORKING` | `WorkElapsed` | `WORK_ALERTING` | 通知 + 音效；面板弹出置顶（**不抢焦点**）；托盘转红 + 换图标；`nextRepeat = now + 10m` |
+| `WORK_ALERTING` | `Acknowledge` | `BREAKING` | 停止重复提醒；`target = now + 15m`；托盘恢复正常样式；面板显示休息倒计时 |
+| `WORK_ALERTING` | `AlertRepeat` | `WORK_ALERTING` | 再通知 + 再音效；面板再次置顶；`nextRepeat = now + 10m` |
+| `BREAKING` | `BreakElapsed` | `WORKING` | 通知 + 音效（"休息结束，开始下一轮"）；`target = now + 60m`；托盘恢复正常样式 |
+
+### 4.3 时间推进规则
+
+- 一切以**绝对时间戳**为准，不累加秒数（[ADR-0001](../../docs/adr/0001-timestamp-based-timing.md)）
+- `WORK_ALERTING` 的重复间隔从**上一次提醒发出的时刻**起算 10 分钟，无次数上限
+- 系统休眠期间计时照常推进；唤醒后按时间戳判定应处于哪个状态（跨过工作终点 → 立即提醒；跨过休息终点 → 直接进入新工作时段）
+- `PAUSED` 期间不产生任何提醒
+
+## 5. 架构
+
+### 5.1 分层
+
+```
+┌─────────────────────────────────────────┐
+│  Rust 侧（权威）                         │
+│  · TimerCore：纯函数状态机（无 I/O、无时间依赖，now 作为参数传入） │
+│  · ClockThread：每 250ms 校验时间戳      │
+│  · Tray：标题每秒刷新、菜单、图标状态     │
+│  · Notify / Sound：系统通知 + 系统音效    │
+└──────────────┬──────────────────────────┘
+               │ Tauri events（仅状态变化时）
+┌──────────────▼──────────────────────────┐
+│  前端（纯视图）                           │
+│  · 收状态事件，用 targetTime 本地插值渲染  │
+│  · 按钮点击 → invoke 动作给 Rust          │
+└─────────────────────────────────────────┘
+```
+
+**为什么这样分**：面板隐藏时 WKWebView 会节流前端定时器，心跳必须活在 Rust 里（[ADR-0002](../../docs/adr/0002-authoritative-clock-in-rust.md)）。前端只负责画，且节流无害。
+
+### 5.2 目录
+
+```
+timer-app/
+├── package.json / vite.config.ts / tsconfig.json / index.html
+├── src/                          # 前端：纯视图
+│   ├── main.tsx
+│   ├── App.tsx
+│   ├── types.ts
+│   ├── components/
+│   │   ├── WorkPanel.tsx
+│   │   ├── PausedPanel.tsx
+│   │   ├── AlertPanel.tsx
+│   │   ├── BreakPanel.tsx
+│   │   └── OnboardingPanel.tsx
+│   └── styles.css
+├── src-tauri/
+│   ├── Cargo.toml
+│   ├── tauri.conf.json
+│   ├── capabilities/default.json
+│   ├── icons/
+│   └── src/
+│       ├── main.rs
+│       ├── lib.rs
+│       ├── timer/
+│       │   ├── mod.rs
+│       │   ├── state.rs          # 纯函数状态机 + cargo test
+│       │   └── clock.rs          # 权威时钟线程
+│       ├── tray.rs
+│       ├── notify.rs             # 系统通知 + 系统音效
+│       └── config.rs             # 时长常量 + dev 加速开关
+├── CONTEXT.md
+├── docs/
+│   ├── adr/
+│   └── agents/
+└── .scratch/focus-timer/
+```
+
+### 5.3 进程间通信
+
+**Rust → 前端**（event `timer://state`，仅状态变化时触发）：
+
+```ts
+type TimerState = 'WORKING' | 'PAUSED' | 'WORK_ALERTING' | 'BREAKING'
+interface TimerSnapshot {
+  state: TimerState
+  targetMs: number      // 目标时刻（epoch ms）；暂停时为剩余毫秒数
+  alerting: boolean     // 是否处于待确认提醒
+}
+```
+
+**前端 → Rust**（`invoke("timer_action", { action })`），`action ∈ { "pause" | "resume" | "restart" | "acknowledge" }`。
+
+前端每 250ms 用本地 `setInterval` 做插值渲染：`remaining = max(0, targetMs - Date.now())`。
+
+### 5.4 托盘
+
+- **标题**：剩余时间 `MM:SS`（`WORK_ALERTING` 时渲染为红色）
+- **图标**：常态图标；`WORK_ALERTING` 时换醒目图标
+- **菜单**：`打开面板` / `暂停`（仅 `WORKING` 可用）/ `退出`
+- **左键点击**：显示面板（`show()` 但**不** `setFocus()`，不抢焦点）
+
+### 5.5 提醒
+
+| 时机 | 通知 | 音效 | 面板 |
+|---|---|---|---|
+| 工作时段结束 | ✅ | ✅ | 弹出置顶，不抢焦点 |
+| 10 分钟未确认 | ✅ | ✅ | 再次置顶 |
+| 确认休息 | — | — | 切到休息倒计时 |
+| 休息时段结束 | ✅ | ✅ | 切回工作倒计时 |
+
+音效走 **Rust 侧 macOS 系统音效**（`AudioServicesPlaySystemSound`），不依赖 webview 音频上下文——避免"从未交互过 → AudioContext suspended → 一声不吭"。
+
+### 5.6 配置
+
+| 常量 | 值 | 说明 |
+|---|---|---|
+| `WORK_DURATION` | 60 分钟 | 工作时段 |
+| `BREAK_DURATION` | 15 分钟 | 休息时段 |
+| `REPEAT_INTERVAL` | 10 分钟 | 重复提醒间隔 |
+
+时长写死。开发期加速开关：环境变量 `FOCUS_TIMER_SCALE`（倍数），**仅 debug 构建读取**，release 构建忽略。
+
+## 6. 关键决策
+
+| ADR | 决策 |
+|---|---|
+| [0001](../../docs/adr/0001-timestamp-based-timing.md) | 用绝对时间戳推进计时 |
+| [0002](../../docs/adr/0002-authoritative-clock-in-rust.md) | 状态机与权威时钟放在 Rust 侧 |
+| [0003](../../docs/adr/0003-no-state-persistence.md) | 不持久化任何状态 |
+
+## 7. 环境准备
+
+当前机器**缺 Rust 和 Tauri CLI**，是唯一的硬阻塞：
+
+```bash
+# 1. Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+# 重启终端使 ~/.cargo/bin 进入 PATH
+
+# 2. Tauri CLI
+npm i -g @tauri-apps/cli
+```
+
+已就绪：Node v26.10.0、npm 11.7.0、macOS 26.3.2 (arm64 / Apple M1)、Xcode CLT 26.3（clang 17 + MacOSX26.2.sdk，macOS 桌面构建**不需要**完整 Xcode）。
+
+## 8. 里程碑
+
+| M | 内容 | 票 |
+|---|---|---|
+| M1 | 工程骨架 | 01 |
+| M2 | Rust 计时核心（状态机 + 时钟） | 02, 03 |
+| M3 | 托盘与提醒 | 04, 05 |
+| M4 | 面板 UI 与引导 | 06, 07 |
+| M5 | 收尾 | 08, 09, 10 |
+
+## 9. 验收标准
+
+- [ ] 启动应用 → 托盘出现，标题显示约 `60:00`，面板不弹出
+- [ ] 工作时段到点 → 通知 + 音效 + 面板弹出置顶且**不抢焦点**；托盘转红换图标
+- [ ] 10 分钟不确认 → 再来一次通知 + 音效 + 面板再次置顶
+- [ ] 点"马上去休息 15 分钟" → 面板显示 `15:00` 倒计时；重复提醒停止；托盘恢复正常样式
+- [ ] 休息结束 → 通知 + 音效 + 自动回到工作时段 `60:00`
+- [ ] 工作时段按暂停 → 时间冻结；按继续 → 接着走剩余
+- [ ] 按"重新计时" → 丢弃剩余，重开 `60:00`
+- [ ] 休息时段中无任何按钮
+- [ ] 点面板 ✕ → 面板隐藏，计时继续，托盘仍在
+- [ ] 重复双击 `.app` → 不起第二个实例，只激活面板
+- [ ] 合盖跨过工作终点 → 醒来立即收到提醒
+- [ ] 退出后重新启动 → 从头开始新的 60 分钟（无残留）
+- [ ] `cargo test` 全绿，覆盖 §4.2 每一行转移
