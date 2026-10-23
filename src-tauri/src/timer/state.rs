@@ -247,16 +247,7 @@ pub fn reduce(core: &TimerCore, event: Event, now: u64, cfg: &TimerConfig) -> Tr
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const MIN: u64 = 60_000;
-
-    fn cfg() -> TimerConfig {
-        TimerConfig {
-            work_ms: 60 * MIN,
-            break_ms: 15 * MIN,
-            repeat_ms: 10 * MIN,
-        }
-    }
+    use crate::timer::test_support::{cfg, MIN};
 
     fn step(core: &TimerCore, event: Event, now: u64) -> Transition {
         reduce(core, event, now, &cfg())
