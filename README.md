@@ -123,3 +123,7 @@ docs/install.md       打包与安装
 
 开机自启、时长可配置、计时状态持久化、跨平台、签名与公证、自动更新、历史统计。
 原因逐条写在 [`spec.md` §2](.scratch/focus-timer/spec.md#2-范围)。
+
+## 许可证
+
+[MIT](LICENSE)。

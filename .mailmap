@@ -1,0 +1,12 @@
+# 提交的作者名与 GitHub 账号对不上。
+#
+# 18 条提交里的作者邮箱是 cai.he@derbysoft.net，而这个邮箱在 GitHub 上登记在
+# 另一个账号（data-cai-he）名下。于是仓库的提交列表里，作者显示的是一个跟
+# 仓库主人（hochoy18）看起来毫无关系的陌生账号。
+#
+# .mailmap 只改**显示**，不动历史：原始 commit 对象里的邮箱原样保留（API 照样
+# 读得到），改的是 git log / GitHub 提交列表上显示的名字。想连邮箱一起换掉
+# 只能重写历史——那件事的代价另说。
+#
+# 格式：<显示名> <显示邮箱> <提交里原来的邮箱>
+hochoy18 <cai.he@derbysoft.net> <cai.he@derbysoft.net>
