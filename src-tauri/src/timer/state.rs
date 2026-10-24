@@ -249,8 +249,14 @@ mod tests {
     use super::*;
     use crate::timer::test_support::{cfg, MIN};
 
+    /// 用默认时长走一步。
     fn step(core: &TimerCore, event: Event, now: u64) -> Transition {
-        reduce(core, event, now, &cfg())
+        step_with(core, event, now, &cfg())
+    }
+
+    /// 用一份指定的时长走一步。
+    fn step_with(core: &TimerCore, event: Event, now: u64, cfg: &TimerConfig) -> Transition {
+        reduce(core, event, now, cfg)
     }
 
     fn has_effect(t: &Transition, e: Effect) -> bool {
@@ -564,6 +570,47 @@ mod tests {
         c.work_ms = 42;
         let core = TimerCore::start(0, &c);
         assert_eq!(core.deadline_ms, 42);
+    }
+
+    #[test]
+    fn the_whole_cycle_runs_on_scaled_durations() {
+        // 票 09 的核心：60 / 15 / 10 分钟压成秒级之后，工作 → 提醒 → 重复提醒
+        // → 确认 → 休息 → 休息结束 → 回到工作，这条路一个环节都不能少，
+        // 而且每一段的时长都得跟着缩放走。
+        let scaled = TimerConfig::default().scaled(0.01);
+        // 60 分钟 → 36 秒，15 分钟 → 9 秒，10 分钟 → 6 秒。
+        assert_eq!(scaled.work_ms, 36_000);
+        assert_eq!(scaled.break_ms, 9_000);
+        assert_eq!(scaled.repeat_ms, 6_000);
+
+        let mut core = TimerCore::start(0, &scaled);
+        assert_eq!(core.deadline_ms, 36_000);
+
+        // 工作时段结束 → 待确认提醒。
+        let work = step_with(&core, Event::WorkElapsed, 36_000, &scaled);
+        core = work.core;
+        assert_eq!(core.state, TimerState::WorkAlerting);
+        assert!(work.effects.iter().any(|e| matches!(e, Effect::Notify { .. })));
+        assert!(has_effect(&work, Effect::ShowPanel));
+
+        // 重复提醒按**缩放后**的间隔排：36 秒 + 6 秒。
+        let repeat = step_with(&core, Event::AlertRepeat, 42_000, &scaled);
+        core = repeat.core;
+        assert_eq!(core.state, TimerState::WorkAlerting);
+        assert_eq!(core.deadline_ms, 42_000 + 6_000);
+        assert!(has_effect(&repeat, Effect::PlaySound));
+
+        // 确认去休息 → 休息时段按缩放后的时长开始：48 秒 + 9 秒。
+        let acknowledged = step_with(&core, Event::Acknowledge, 48_000, &scaled);
+        core = acknowledged.core;
+        assert_eq!(core.state, TimerState::Breaking);
+        assert_eq!(core.deadline_ms, 48_000 + 9_000);
+
+        // 休息结束 → 回到工作时段，又是完整的一个（缩放后的）工作时段。
+        let break_end = step_with(&core, Event::BreakElapsed, 57_000, &scaled);
+        core = break_end.core;
+        assert_eq!(core.state, TimerState::Working);
+        assert_eq!(core.deadline_ms, 57_000 + 36_000);
     }
 
     // ── 提醒的文案与音效 ────────────────────────────────────────────────

@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, Manager, RunEvent, Runtime, Wry};
 
-use crate::config::TimerConfig;
+use crate::config::{TimerConfig, SCALE_ENV_VAR};
 use crate::notify::Notifier;
 use crate::timer::clock::{event_for_action, ClockThread, Dispatcher};
 use crate::timer::state::{TimerSnapshot, TimerState};
@@ -106,6 +106,20 @@ impl Dispatcher for TauriDispatcher {
     }
 }
 
+/// 开发期的加速开关生效时说一声。
+///
+/// 不说的话，应用看起来和平常一模一样——只有托盘上的数字变短了。
+/// 那种"神秘地快了 60 倍"很容易被当成 bug 查半天。
+///
+/// release 构建里这个开关根本不存在（`from_env_or_default` 恒为真实时长），
+/// 所以这里只会在 `tauri dev` 下出声。
+fn announce_scale(cfg: &TimerConfig) {
+    if *cfg == TimerConfig::default() {
+        return;
+    }
+    eprintln!("focus-timer: 开发期缩放生效（{SCALE_ENV_VAR}）——{cfg}");
+}
+
 /// 前端按钮：把动作交给状态机。
 ///
 /// 状态机住在时钟线程里，所以这里只是把动作递过去；时钟线程立刻应用它，
@@ -176,7 +190,9 @@ pub fn run() {
                 app: app.handle().clone(),
                 notifier: Notifier::new(app.handle().clone()),
             });
-            let clock = ClockThread::start(dispatcher, TimerConfig::from_env_or_default());
+            let cfg = TimerConfig::from_env_or_default();
+            announce_scale(&cfg);
+            let clock = ClockThread::start(dispatcher, cfg);
             app.manage(clock);
 
             // 首次运行：把面板弹出来，让引导露个脸。
