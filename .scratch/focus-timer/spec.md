@@ -16,7 +16,7 @@
 - 系统通知 + 系统音效（Rust 侧发出）
 - 首次运行一次性引导 + 通知权限申请
 - 单实例
-- 打包成可安装的 `.app`
+- 打包成可安装的 `.app`（打包 / 安装 / Gatekeeper 见 [`docs/install.md`](../../docs/install.md)）
 
 ### 本期不做
 
@@ -26,6 +26,8 @@
 | 时长可配置 | 决策：先写死 60 / 15 / 10，改代码即可 |
 | 计时状态持久化 | [ADR-0003](../../docs/adr/0003-no-state-persistence.md)（例外有三个，都不记计时进度：引导标记，见票 07；单实例的 socket 和名分锁，见票 08） |
 | 跨平台 | 决策：仅 macOS |
+| 签名与公证 | 决策：本期只做本地打包，不做 Developer ID 签名与 Apple 公证。Gatekeeper 那一节见 [`docs/install.md`](../../docs/install.md) |
+| 自动更新 | 决策：本期不做；换版本由用户自己装新包 |
 | 历史统计 / 番茄钟风格计数 | 不在本工具职责内 |
 
 ## 3. 领域模型
@@ -212,6 +214,14 @@ FOCUS_TIMER_SCALE=0.01 npm run tauri dev
 
 加速时**文案不跟着变**：提醒里仍然写着"已连续工作 1 小时"，面板上仍然写着"马上去休息 15 分钟"。文案是产品定下来的常量（Rust 侧是 `&'static str`，前端是写死的字符串），让文案跟着倍率走就得把提醒的措辞参数化——那是另一件事。开发期看时长看托盘上的数字就够了。
 
+**启动时把三个时长打进 stderr**（两种构建都打）：
+
+```
+focus-timer: 工作时段 60 分钟 / 休息时段 15 分钟 / 重复提醒 10 分钟
+```
+
+不打这一句，"这个包用的是真实时长"就只能靠读代码才看得出来——而这一句是打包版的验收凭据（见票 10）：带着 `FOCUS_TIMER_SCALE` 跑打包版，打印的仍然是真实时长。开发版在缩放生效时**额外**打一句"开发期缩放生效"。
+
 ## 6. 关键决策
 
 | ADR | 决策 |
@@ -245,6 +255,8 @@ npm i -g @tauri-apps/cli
 
 已就绪：Node v26.10.0、npm 11.7.0、macOS 26.3.2 (arm64 / Apple M1)、Xcode CLT 26.3（clang 17 + MacOSX26.2.sdk，macOS 桌面构建**不需要**完整 Xcode）。
 
+打包与安装是另一条路：`npm run tauri build` 出 `FocusTimer.app`，装进 `/Applications` 的步骤、Gatekeeper 那一行、第一次运行要注意什么，都写在 [`docs/install.md`](../../docs/install.md)。
+
 ## 8. 里程碑
 
 | M | 内容 | 票 |
@@ -271,3 +283,5 @@ npm i -g @tauri-apps/cli
 - [ ] 合盖跨过工作终点 → 醒来立即收到提醒
 - [ ] 退出后重新启动 → 从头开始新的 60 分钟（无残留）
 - [ ] `cargo test` 全绿，覆盖 §4.2 每一行转移
+
+> 这一串里绝大多数有自动化兜着——哪一条由谁验的，见票 10 的 [§9 对照表](issues/10-package-macos-app.md)。

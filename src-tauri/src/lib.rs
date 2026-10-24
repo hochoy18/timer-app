@@ -10,7 +10,11 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, Manager, RunEvent, Runtime, Wry};
 
-use crate::config::{TimerConfig, SCALE_ENV_VAR};
+use crate::config::TimerConfig;
+// 加速开关的名字只在 debug 构建里用得上（release 那段代码根本没编进去），
+// 所以这个 import 也跟着 cfg——否则 release 构建会报"没用到"。
+#[cfg(debug_assertions)]
+use crate::config::SCALE_ENV_VAR;
 use crate::notify::Notifier;
 use crate::timer::clock::{event_for_action, ClockThread, Dispatcher};
 use crate::timer::state::{TimerSnapshot, TimerState};
@@ -106,18 +110,27 @@ impl Dispatcher for TauriDispatcher {
     }
 }
 
-/// 开发期的加速开关生效时说一声。
+/// 启动时把时长说一声。
 ///
-/// 不说的话，应用看起来和平常一模一样——只有托盘上的数字变短了。
-/// 那种"神秘地快了 60 倍"很容易被当成 bug 查半天。
+/// **release 构建也说话。** 打包版跑起来时，终端里能看见它用的是哪三个时长——
+/// 这是"release 下 `FOCUS_TIMER_SCALE` 不生效"最直接的凭据（票 10）：
+/// 带着那个变量启动打包版，打印出来的仍然是"60 分钟 / 15 分钟 / 10 分钟"。
 ///
-/// release 构建里这个开关根本不存在（`from_env_or_default` 恒为真实时长），
-/// 所以这里只会在 `tauri dev` 下出声。
-fn announce_scale(cfg: &TimerConfig) {
-    if *cfg == TimerConfig::default() {
-        return;
+/// 从访达双击启动时 stderr 没有去处，这行字就没人看见。它是给从终端里跑
+/// 打包版的人留的——也是给"这个包到底装了什么"留的一行凭据。
+///
+/// 不说的话，应用看起来和平常一模一样——只有托盘上的数字变短了。那种
+/// "神秘地快了 60 倍"很容易被当成 bug 查半天。
+fn announce_durations(cfg: &TimerConfig) {
+    eprintln!("focus-timer: {cfg}");
+    // 缩放生效时**额外**说一句。release 构建里这个开关根本不存在
+    // （`from_env_or_default` 恒为真实时长），所以这行只在 `tauri dev` 下出现。
+    #[cfg(debug_assertions)]
+    {
+        if *cfg != TimerConfig::default() {
+            eprintln!("focus-timer: 开发期缩放生效（{SCALE_ENV_VAR}）");
+        }
     }
-    eprintln!("focus-timer: 开发期缩放生效（{SCALE_ENV_VAR}）——{cfg}");
 }
 
 /// 前端按钮：把动作交给状态机。
@@ -191,7 +204,7 @@ pub fn run() {
                 notifier: Notifier::new(app.handle().clone()),
             });
             let cfg = TimerConfig::from_env_or_default();
-            announce_scale(&cfg);
+            announce_durations(&cfg);
             let clock = ClockThread::start(dispatcher, cfg);
             app.manage(clock);
 

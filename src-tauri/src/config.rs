@@ -24,9 +24,9 @@ pub struct TimerConfig {
 impl std::fmt::Display for TimerConfig {
     /// 把三个时长说成一句人能读的话。
     ///
-    /// "工作时段 36 秒 / 休息时段 9 秒 / 重复提醒 6 秒"——开发期加速开关
-    /// 生效时，这句话会打在终端上。不说的话，应用看起来和平常一模一样，
-    /// 只有托盘上的数字变短了。
+    /// "工作时段 60 分钟 / 休息时段 15 分钟 / 重复提醒 10 分钟"——这句话在
+    /// **两种构建**里都会打在 stderr 上（见 `lib.rs` 的 `announce_durations`）。
+    /// 不说的话，应用看起来和平常一模一样，只有托盘上的数字变短了。
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -41,12 +41,25 @@ impl std::fmt::Display for TimerConfig {
 /// 毫秒 → 一句人能读的话。
 ///
 /// 不到一秒就说毫秒：说"0 秒"比什么都不说更让人困惑。
+/// 到了分钟就说分钟——"工作时段 3600 秒"没人能一眼看出那是**一小时**，
+/// 而打包版启动时打印的就是这句话（见 `lib.rs` 里的 `announce_durations`）：
+/// 那行字是"这个包用的是真实时长"的凭据，得一眼看得懂。
+///
+/// 全部用整数算：浮点秒数会把"30.5 秒"这种小数漏进给人看的字里。
 fn human_ms(ms: u64) -> String {
-    let secs = ms as f64 / 1000.0;
-    if secs >= 1.0 {
-        format!("{secs} 秒")
+    let secs = ms / 1000;
+    if secs == 0 {
+        return format!("{ms} 毫秒");
+    }
+    if secs < 60 {
+        return format!("{secs} 秒");
+    }
+    let mins = secs / 60;
+    let rest = secs % 60;
+    if rest == 0 {
+        format!("{mins} 分钟")
     } else {
-        format!("{ms} 毫秒")
+        format!("{mins} 分 {rest} 秒")
     }
 }
 
@@ -200,6 +213,35 @@ mod tests {
             TimerConfig::default().scaled(0.01).to_string(),
             "工作时段 36 秒 / 休息时段 9 秒 / 重复提醒 6 秒"
         );
+    }
+
+    #[test]
+    fn the_real_durations_are_spoken_in_minutes() {
+        // 打包版启动时打的是这一句（见 `lib.rs` 的 `announce_durations`）。
+        // "3600 秒"没人能一眼看出那是**一小时**——这行字是"这个包用的是真实
+        // 时长"的凭据（票 10 的验收），得一眼看得懂。
+        assert_eq!(
+            TimerConfig::default().to_string(),
+            "工作时段 60 分钟 / 休息时段 15 分钟 / 重复提醒 10 分钟"
+        );
+    }
+
+    #[test]
+    fn a_mixed_length_is_spoken_in_both_units() {
+        // 不是整分钟的时长（产品上不存在，但格式化器不该把它说成"0 分钟"）。
+        assert_eq!(human_ms(90_000), "1 分 30 秒");
+    }
+
+    #[test]
+    fn a_sub_second_length_is_spoken_in_milliseconds() {
+        // 不到一秒就说毫秒：说"0 秒"比什么都不说更让人困惑。
+        assert_eq!(human_ms(999), "999 毫秒");
+    }
+
+    #[test]
+    fn fractions_of_a_second_are_dropped() {
+        // 计时器看的是秒，毫秒那一截不进话里——不然会印出"30.5 秒"。
+        assert_eq!(human_ms(90_500), "1 分 30 秒");
     }
 
     // ── 环境变量的值 ────────────────────────────────────────────────────

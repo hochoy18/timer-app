@@ -34,6 +34,9 @@
   "bundle": {
     "active": true,
     "targets": ["app"],
+    "category": "Productivity",
+    "shortDescription": "常驻菜单栏的专注计时器",
+    "longDescription": "工作时段满 1 小时就提醒你休息，不确认则每 10 分钟重复提醒一次；休息结束自动开始下一个工作时段。",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

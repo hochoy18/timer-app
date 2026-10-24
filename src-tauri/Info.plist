@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  合并进打包出来的 Info.plist 的补充项（Tauri 会自动找到这份挨着
+  tauri.conf.json 的文件，把它和自己的默认 Info.plist 合并在一起）。
+
+  这里只写一件事：
+
+  LSUIElement = true —— 这是 macOS 上"菜单栏应用"的开关：应用不出现在 Dock、
+  也不抢焦点。应用启动时没有窗口要给人看，唯一的界面是菜单栏上的图标，
+  让它在 Dock 里占个位反而不像话。
+
+  同一件事代码里也做了一遍（lib.rs 里的 set_activation_policy(Accessory)）。
+  两处都留着，因为它们管的不是同一件事：这一处管"启动第一帧就别在 Dock 上
+  露脸"，那一处管"运行期把激活策略钉死"。
+-->
+<plist version="1.0">
+  <dict>
+    <key>LSUIElement</key>
+    <true/>
+  </dict>
+</plist>
