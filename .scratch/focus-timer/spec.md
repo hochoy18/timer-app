@@ -101,15 +101,19 @@ timer-app/
 │   │   ├── PausedPanel.tsx
 │   │   ├── AlertPanel.tsx
 │   │   ├── BreakPanel.tsx
+│   │   ├── PanelHeader.tsx       # 面板右上角的 ✕（票 07 抽出来共用）
 │   │   └── OnboardingPanel.tsx   # 票 07 落地
 │   ├── hooks/
 │   │   ├── useTimerState.ts      # 订阅 timer://state
-│   │   └── useNow.ts             # 250ms 的本地时钟
+│   │   ├── useNow.ts             # 250ms 的本地时钟
+│   │   └── useOnboarding.ts      # 引导状态 + 申请权限（票 07）
 │   ├── lib/
 │   │   ├── actions.ts            # 四个动作 → invoke("timer_action")
 │   │   └── format.ts             # MM:SS / H:MM:SS
 │   ├── __tests__/panel.test.tsx  # 面板四态 + 按钮（票 06）
+│   ├── __tests__/onboarding.test.tsx  # 引导 + 权限申请（票 07）
 │   ├── test/setup.ts
+│   ├── test/harness.tsx          # 前端用例的公共脚手架
 │   └── styles.css
 ├── src-tauri/
 │   ├── Cargo.toml
@@ -125,6 +129,7 @@ timer-app/
 │       │   └── clock.rs          # 权威时钟线程
 │       ├── tray.rs
 │       ├── panel.rs              # 面板窗口：显示 / 隐藏 / 关掉不退出
+│       ├── onboarding.rs         # 引导标记 + 通知权限申请（票 07）
 │       ├── notify.rs             # 系统通知 + 系统音效
 │       └── config.rs             # 时长常量 + dev 加速开关
 ├── CONTEXT.md
@@ -151,10 +156,12 @@ interface TimerSnapshot {
 
 **每秒一帧而不是仅状态变化**：前端用自己的 `Date.now()` 算剩余，Rust 用 `SystemTime::now()`，两个时钟可能差几秒。每秒推一帧等于持续对时，前端每帧都能把显示拉回 Rust 的真值；改成仅状态变化就没有任何纠偏机制了，那点偏差会一直留在面板上。代价只是每秒一条 IPC 消息。
 
-**前端 → Rust**（两条命令）：
+**前端 → Rust**（四条命令）：
 
 - `invoke("timer_action", { action })`，`action ∈ { "pause" | "resume" | "restart" | "acknowledge" }`——面板上的四个动作按钮。
 - `invoke("hide_panel")`——面板右上角的 ✕。**只隐藏窗口，不退出应用**：计时在时钟线程里继续走，托盘还在（CONTEXT.md 的"面板"）。这条跟 `timer_action` 分开，是因为它根本不碰状态机。
+- `invoke("onboarding_status")`——问 Rust：引导还没做完吗？引导是 Rust 说了算的（它看着那个标记文件），前端只负责照着画。
+- `invoke("onboarding_complete")`——告诉 Rust：引导做完了（权限申请也做了）。Rust 记下引导标记，顺手递一条**探测通知**（见 §5.5）。
 
 窗口右上角的 ✕ 和系统级的关闭（⌘W、窗口的关闭按钮）走同一条路：拦住关闭、改为隐藏。面板是应用里唯一的窗口，放任它被关掉的话，Tauri 会因为"一个窗口都不剩"而退出应用，计时就断了。
 
@@ -181,6 +188,8 @@ interface TimerSnapshot {
 | 休息时段结束 | ✅ | ✅ | 切回工作倒计时 |
 
 音效走 **Rust 侧 macOS 系统音效**（`AudioServicesPlaySystemSound`），不依赖 webview 音频上下文——避免"从未交互过 → AudioContext suspended → 一声不吭"。
+
+**还有一条不是提醒的**：首次运行完成引导时（票 07），Rust 会递一条**探测通知**。它不重复、不承担任何提醒职责——它是把 macOS 那句「想要发送通知」逼出来的手段：插件在桌面上不会自己弹权限框，macOS 只在 app **第一次投递通知**时问一句。已授权的话，这条探测通知就当"提醒已开启"的确认。
 
 ### 5.6 配置
 
@@ -246,6 +255,7 @@ npm i -g @tauri-apps/cli
 - [ ] 按"重新计时" → 丢弃剩余，重开 `60:00`
 - [ ] 休息时段中无任何按钮
 - [ ] 点面板 ✕ → 面板隐藏，计时继续，托盘仍在
+- [ ] 首次启动 → 面板里出现一次性引导，说明 60/15/10 三件事；点"启用通知" → 申请通知权限、记下引导标记；之后启动不再出现引导
 - [ ] 重复双击 `.app` → 不起第二个实例，只激活面板
 - [ ] 合盖跨过工作终点 → 醒来立即收到提醒
 - [ ] 退出后重新启动 → 从头开始新的 60 分钟（无残留）

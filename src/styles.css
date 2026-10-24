@@ -59,6 +59,10 @@ body,
   background: #fff8e6;
 }
 
+.panel-onboarding {
+  background: #f0f6ff;
+}
+
 .panel-header {
   display: flex;
   align-items: center;
@@ -182,4 +186,31 @@ body,
   width: 100%;
   margin-top: 20px;
   padding: 11px 16px;
+}
+
+/* 引导面板：一屏说清这个 app 干什么，然后把权限按钮放在最下面。 */
+.onboarding {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.onboarding-title {
+  margin: 0 0 10px;
+  color: #111;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.onboarding-copy {
+  margin: 0 0 8px;
+  color: #495057;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: default;
 }

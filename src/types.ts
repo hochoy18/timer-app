@@ -12,3 +12,9 @@ export interface TimerSnapshot {
 
 /** 用户动作。Rust 侧 `timer_action` 命令接受的取值。 */
 export type TimerAction = "pause" | "resume" | "restart" | "acknowledge";
+
+/** 与 Rust 侧 `onboarding::OnboardingStatus` 一一对应。 */
+export interface OnboardingStatus {
+  /** 引导还没做完吗？ */
+  pending: boolean;
+}

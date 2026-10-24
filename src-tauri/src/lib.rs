@@ -1,5 +1,6 @@
 pub mod config;
 pub mod notify;
+pub mod onboarding;
 pub mod panel;
 pub mod timer;
 pub mod tray;
@@ -131,6 +132,11 @@ pub fn run() {
             // 用 `Accessory` 而不是 `Regular`：后者会在 Dock 和 Cmd-Tab 里露脸。
             let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
+            // 引导要先建好：托盘之前就得知道这是不是第一次运行（票 07）。
+            let onboarding = onboarding::create(app.handle());
+            let first_run = onboarding.pending();
+            app.manage(onboarding);
+
             // 托盘要先于时钟建好：时钟的第一帧就要设托盘标题。
             tray::create(app.handle())?;
 
@@ -140,9 +146,23 @@ pub fn run() {
             });
             let clock = ClockThread::start(dispatcher, TimerConfig::from_env_or_default());
             app.manage(clock);
+
+            // 首次运行：把面板弹出来，让引导露个脸。
+            //
+            // 非首次运行面板照旧藏着，应用安静地开始一个工作时段（spec §4.1）。
+            // 弹出来的是同一个面板窗口——引导是面板里的一屏，不是另一个窗口
+            // （面板是应用里唯一的窗口，见 CONTEXT.md）。
+            if first_run {
+                panel::show(app.handle());
+            }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![timer_action, hide_panel])
+        .invoke_handler(tauri::generate_handler![
+            timer_action,
+            hide_panel,
+            onboarding::onboarding_status,
+            onboarding::onboarding_complete
+        ])
         // 面板被要求关闭（系统关闭按钮、⌘W）：只藏起来，不退出。
         //
         // 这一层不拦的话，窗口会被销毁——而面板是应用里唯一的窗口，Tauri 会
@@ -180,12 +200,14 @@ mod tests {
 
     use super::*;
     use crate::config::TimerConfig;
+    use crate::onboarding::test_support::temp_marker;
+    use crate::onboarding::Onboarding;
     use crate::timer::clock::{ClockThread, Dispatcher};
     use crate::timer::state::TimerState;
     use crate::timer::test_support::{Call, FakeDispatcher};
     use std::sync::Arc;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
-    use tauri::ipc::{CallbackFn, InvokeBody};
+    use tauri::ipc::{CallbackFn, InvokeBody, InvokeResponseBody};
     use tauri::test::{
         get_ipc_response, mock_builder, mock_context, noop_assets, MockRuntime, INVOKE_KEY,
     };
@@ -195,6 +217,8 @@ mod tests {
     struct TestApp {
         app: tauri::App<MockRuntime>,
         recorder: Arc<FakeDispatcher>,
+        /// 引导标记文件的位置。引导的用例要盯着它。
+        marker: std::path::PathBuf,
     }
 
     impl TestApp {
@@ -205,15 +229,27 @@ mod tests {
             // 心跳调快些，好让"工作时段到期"这种时间驱动的转移不用等真的一小时。
             let clock = ClockThread::start_with_interval(dispatcher, cfg, Duration::from_millis(5));
             let app = mock_builder()
-                .invoke_handler(tauri::generate_handler![timer_action, hide_panel])
+                .invoke_handler(tauri::generate_handler![
+                    timer_action,
+                    hide_panel,
+                    onboarding::onboarding_status,
+                    onboarding::onboarding_complete
+                ])
                 .build(mock_context(noop_assets()))
                 .expect("建不出假 app");
             app.manage(clock);
+            // 引导：标记放在一个临时目录里，当作"第一次运行"。
+            let marker = temp_marker("ipc");
+            app.manage(Onboarding::new(Some(marker.clone())));
             // 面板的 webview：IPC 请求得有个 webview 才能发进去。
             tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
                 .build()
                 .expect("建不出面板");
-            Self { app, recorder }
+            Self {
+                app,
+                recorder,
+                marker,
+            }
         }
 
         /// 走真正的 IPC 通道点一个按钮。
@@ -223,6 +259,11 @@ mod tests {
 
         /// 走真正的 IPC 通道调一个别的命令（比如面板右上角的 ✕）。
         fn invoke(&self, cmd: &str, body: serde_json::Value) {
+            self.invoke_json(cmd, body);
+        }
+
+        /// 走真正的 IPC 通道调一个命令，并拿回它的回答。
+        fn invoke_json(&self, cmd: &str, body: serde_json::Value) -> serde_json::Value {
             let panel = self.app.get_webview_window("main").expect("没有面板");
             let request = InvokeRequest {
                 cmd: cmd.into(),
@@ -233,7 +274,15 @@ mod tests {
                 headers: Default::default(),
                 invoke_key: INVOKE_KEY.to_string(),
             };
-            get_ipc_response(&panel, request).expect("命令没有返回");
+            let response = get_ipc_response(&panel, request)
+                .unwrap_or_else(|e| panic!("命令 {cmd} 失败了：{e:?}"));
+            match response {
+                // 命令的回答是一段 JSON 文本：自己解析，别指望它已经是值。
+                InvokeResponseBody::Json(text) => {
+                    serde_json::from_str(&text).expect("回答不是合法 JSON")
+                }
+                other => panic!("命令没有返回 JSON：{other:?}"),
+            }
         }
 
         /// 已经推给前端的快照。
@@ -378,6 +427,83 @@ mod tests {
             app.snapshots().len(),
             before,
             "藏面板不该推任何快照：{:?}",
+            app.snapshots()
+        );
+    }
+
+    // ── 引导 ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn a_fresh_install_still_needs_the_onboarding() {
+        // 第一次运行：引导还没做，前端该被告知"要引导"。
+        let app = TestApp::start(TimerConfig::default());
+
+        let status = app.invoke_json("onboarding_status", serde_json::json!({}));
+
+        assert_eq!(
+            status["pending"], true,
+            "第一次运行该要引导：{status:?}"
+        );
+    }
+
+    #[test]
+    fn completing_the_onboarding_writes_the_marker() {
+        // 前端说"做完了"（权限申请也做了）→ 记下标记。
+        let app = TestApp::start(TimerConfig::default());
+
+        let done = app.invoke_json("onboarding_complete", serde_json::json!({}));
+
+        assert_eq!(done, serde_json::json!(true), "标记该写下去");
+        assert!(app.marker.exists(), "引导标记该落盘");
+    }
+
+    #[test]
+    fn the_marker_records_nothing_but_its_own_existence() {
+        // ADR-0003：磁盘上只允许有引导标记这一个文件，而且它只记"引导做过"。
+        let app = TestApp::start(TimerConfig::default());
+        app.invoke_json("onboarding_complete", serde_json::json!({}));
+
+        let content = std::fs::read(&app.marker).expect("读不出标记");
+        assert!(
+            content.is_empty(),
+            "标记里不该有别的内容（ADR-0003）：{content:?}"
+        );
+    }
+
+    #[test]
+    fn the_onboarding_does_not_come_back_after_it_is_done() {
+        // 做完之后，同一次运行里再问一次也是"不用引导了"。
+        let app = TestApp::start(TimerConfig::default());
+        app.invoke_json("onboarding_complete", serde_json::json!({}));
+
+        let status = app.invoke_json("onboarding_status", serde_json::json!({}));
+
+        assert_eq!(status["pending"], false, "做完之后不该再引导：{status:?}");
+    }
+
+    #[test]
+    fn a_second_launch_does_not_need_the_onboarding_again() {
+        // 另一次启动：标记在了 → 直接进工作时段。
+        let app = TestApp::start(TimerConfig::default());
+        app.invoke_json("onboarding_complete", serde_json::json!({}));
+
+        // 重新按标记建一个引导状态，模拟下一次启动。
+        let next = Onboarding::new(Some(app.marker.clone()));
+
+        assert!(!next.pending(), "第二次启动不该再引导");
+    }
+
+    #[test]
+    fn completing_the_onboarding_does_not_disturb_the_timer() {
+        // 引导只是引导：计时该照走，面板按钮也照旧管用。
+        let app = TestApp::start(TimerConfig::default());
+        app.invoke_json("onboarding_complete", serde_json::json!({}));
+
+        app.click("pause");
+
+        assert!(
+            app.snapshots().iter().any(|s| s.state == TimerState::Paused),
+            "引导之后计时该照旧管用：{:?}",
             app.snapshots()
         );
     }

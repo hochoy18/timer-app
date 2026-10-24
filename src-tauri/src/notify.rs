@@ -19,7 +19,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_notification::NotificationExt;
 
 // ── 纯逻辑 ────────────────────────────────────────────────────────────
@@ -180,6 +180,16 @@ struct TauriSink<'a, R: Runtime> {
 
 impl<R: Runtime> NotificationSink for TauriSink<'_, R> {
     fn show(&self, title: &str, body: &str) -> Result<(), String> {
+        // `app.notification()` 拿的是通知插件的状态，插件没装上时它会 panic。
+        // 通知只是提醒的一条路（另两条是面板和托盘），所以这里降级成"递不出去"，
+        // 绝不 panic——这正是本模块开头说的那个约定。
+        if self
+            .app
+            .try_state::<tauri_plugin_notification::Notification<R>>()
+            .is_none()
+        {
+            return Err("通知插件没装上".to_string());
+        }
         self.app
             .notification()
             .builder()
