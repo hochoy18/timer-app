@@ -1,5 +1,7 @@
 # FocusTimer
 
+[![CI](https://github.com/hochoy18/timer-app/actions/workflows/ci.yml/badge.svg)](https://github.com/hochoy18/timer-app/actions/workflows/ci.yml)
+
 常驻 macOS 菜单栏的专注计时器。
 
 工作时段满 1 小时就提醒你休息；**不确认则每 10 分钟重复提醒一次**，直到你真的
@@ -118,6 +120,17 @@ docs/install.md       打包与安装
 
 同目录下的 `conversation_1.md` / `conversation_2.md` 是这个项目开头那两轮设计
 对话的原始记录——领域词汇和实现方案就是从那儿来的。
+
+## CI
+
+每次推到 `main` 都跑一遍：前端在 Ubuntu 上跑类型检查 + 用例，应用在
+macOS 上跑 Rust 用例（debug 与 release 各一遍）、真机打包、验产物。
+
+验的不只是"测试过没过"——打包那几步验的是**打出来的东西**：Info.plist 的键、
+plist 指着的图标在不在包里、可执行文件是不是 Mach-O、有没有签名、有没有
+隔离属性。单元用例验不到这些。
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml)。
 
 ## 本期不做
 
