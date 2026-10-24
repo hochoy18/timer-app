@@ -1,0 +1,88 @@
+# 每一票都得自己验——这个文件让"验"这件事不再依赖记性。
+#
+# 跑两段：
+#   前端（ubuntu，便宜）——类型检查 + 21 个用例
+#   应用（macos-latest）——Rust 用例（debug + release）、真机打包、验产物
+#
+# 为什么应用这段必须在 macOS 上跑：这个工具只做 macOS（spec §2 的范围表里
+# "跨平台"是本期不做），托盘 / 通知 / 音效都走系统 API。Linux 上那份 Rust
+# 代码编不过，也没必要编。
+#
+# 依赖走**上游 crates.io**，不是仓库里那份 rsproxy 镜像：那份镜像是因为开发
+# 这台机器连不上 crates.io 才换的，CI 的机器连得上上游——依赖链上少一个
+# 第三方，出了问题也好查。（Cargo.lock 里的校验和与走哪个源无关。）
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# 同一个分支连着推几次时，只留最后一次——前几次的结果没人等。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: 前端（类型检查 + 用例）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26" # 跟开发机同一个大版本
+          cache: npm
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  app:
+    name: 应用（Rust 用例 + 打包 + 验产物）
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+
+      # 依赖走上游 crates.io（理由见文件头）
+      - name: 依赖走上游 crates.io
+        run: |
+          cat > src-tauri/.cargo/config.toml <<'EOF'
+          [source.crates-io]
+          registry = "sparse+https://index.crates.io/"
+          EOF
+
+      - run: npm ci
+
+      # debug 与 release 各跑一遍：release 那遍才跑得到 #[cfg(not(debug_assertions))]
+      # 里的用例——"release 构建无视 FOCUS_TIMER_SCALE"就是靠它兜底的。
+      - name: Rust 用例（debug）
+        run: cargo test
+        working-directory: src-tauri
+
+      - name: Rust 用例（release）
+        run: cargo test --release
+        working-directory: src-tauri
+
+      - name: 打包成 .app
+        run: npm run tauri build
+
+      # 验产物：Info.plist 的键、plist 指着的图标在不在包里、可执行文件是不是
+      # Mach-O、有没有签名、有没有隔离属性。这一段验的是"打出来的东西"，
+      # 单元用例验不到。
+      - name: 验产物
+        run: ./scripts/check-app-bundle.sh
