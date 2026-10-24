@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "面板窗口的默认权限。前端是纯视图：显示/隐藏面板由 Rust 侧执行，因此不需要 window:allow-show / allow-hide 这类细粒度权限。",
+  "description": "面板窗口的默认权限。前端是纯视图：显示/隐藏面板由 Rust 侧执行，因此不需要 window:allow-show / allow-hide 这类细粒度权限。单实例插件（single-instance）不在这里：它整件事都在 Rust 侧发生，没有注册任何命令，所以一条权限都不需要——硬写 single-instance:default 会让构建直接失败（Permission single-instance:default not found）。",
   "windows": ["main"],
   "permissions": ["core:default", "notification:default"]
 }

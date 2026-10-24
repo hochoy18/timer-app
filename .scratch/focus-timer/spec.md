@@ -24,7 +24,7 @@
 |---|---|
 | 开机自启 | 决策：暂不做，日后手动加登录项 |
 | 时长可配置 | 决策：先写死 60 / 15 / 10，改代码即可 |
-| 计时状态持久化 | [ADR-0003](../../docs/adr/0003-no-state-persistence.md)（唯一例外是引导标记，见票 07） |
+| 计时状态持久化 | [ADR-0003](../../docs/adr/0003-no-state-persistence.md)（例外有三个，都不记计时进度：引导标记，见票 07；单实例的 socket 和名分锁，见票 08） |
 | 跨平台 | 决策：仅 macOS |
 | 历史统计 / 番茄钟风格计数 | 不在本工具职责内 |
 
@@ -120,6 +120,8 @@ timer-app/
 │   ├── tauri.conf.json
 │   ├── capabilities/default.json
 │   ├── icons/
+│   ├── tests/
+│   │   └── single_instance.rs    # 进程级的单实例用例（票 08）
 │   └── src/
 │       ├── main.rs
 │       ├── lib.rs                # 命令 + Tauri 接线 + IPC 层的端到端用例
@@ -130,6 +132,7 @@ timer-app/
 │       ├── tray.rs
 │       ├── panel.rs              # 面板窗口：显示 / 隐藏 / 关掉不退出
 │       ├── onboarding.rs         # 引导标记 + 通知权限申请（票 07）
+│       ├── single_instance.rs    # 单实例：后来的实例自己退出（票 08）
 │       ├── notify.rs             # 系统通知 + 系统音效
 │       └── config.rs             # 时长常量 + dev 加速开关
 ├── CONTEXT.md

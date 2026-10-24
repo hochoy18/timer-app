@@ -2,6 +2,7 @@ pub mod config;
 pub mod notify;
 pub mod onboarding;
 pub mod panel;
+pub mod single_instance;
 pub mod timer;
 pub mod tray;
 
@@ -30,11 +31,15 @@ pub(crate) const STATE_EVENT: &str = "timer://state";
 /// 菜单的点击里反过来等这把锁——两边互等，整个应用就卡死了。投递是 FIFO 的，
 /// 所以标题、状态、菜单的先后照样成立。
 ///
-/// **这条只在 `tracing` 关着时成立。** `tauri-runtime-wry` 的 `emit` /
-/// `eval_script` 在 `tracing` feature 打开时会改用 channel + `rx.recv()` 等
-/// 回执，也就是重新变回阻塞的；`TauriDispatcher::emit_state` 那一路就会跟着
-/// 一起等。当前依赖图里没有 `tracing`（`cargo tree -i tracing` 是空的），所以
-/// 成立。**谁给 `tauri-runtime-wry` 打开 `tracing`，谁就得回头看一眼这里。**
+/// **这条只在 `tauri-runtime-wry` 的 `tracing` feature 关着时成立。**
+/// `tauri-runtime-wry` 的 `emit` / `eval_script` 在 `tracing` feature 打开时会
+/// 改用 channel + `rx.recv()` 等回执，也就是重新变回阻塞的；
+/// `TauriDispatcher::emit_state` 那一路就会跟着一起等。
+///
+/// 依赖图里**有** `tracing` 这个 crate 了（单实例插件拉进来的），但那不是关键：
+/// 关键是这个 **feature**，它默认是关的。验它的命令是
+/// `cargo tree -e features -i tauri-runtime-wry | grep tracing`——空的就是没问题。
+/// **谁给 `tauri-runtime-wry` 打开 `tracing`，谁就得回头看一眼这里。**
 ///
 /// 句柄由这里克隆一份交给闭包，免得每个调用点自己管"搬走之前先克隆"。
 pub(crate) fn on_main<R: Runtime>(
@@ -125,7 +130,34 @@ fn hide_panel<R: Runtime>(app: AppHandle<R>) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 单实例的名分得在 Tauri 起来**之前**定下来。
+    //
+    // 抢不到名分的进程立刻退出：那时候托盘图标、时钟线程、webview 都还没有，
+    // 菜单栏上不会多出第二个图标，计时也不会白跑一小段。
+    //
+    // 为什么名分不交给插件：插件在 macOS 上是"先连后绑"，两步之间有缝，两个
+    // 进程能同时挤进去，绑输的那个插件会照样把应用跑起来。细节见
+    // `single_instance` 模块。
+    let context = tauri::generate_context!();
+    let identifier = context.config().identifier.clone();
+    if !single_instance::claim(&identifier) {
+        // 后来的那个：告诉先到的那个"我来了"（让它把面板显示出来），然后退出。
+        single_instance::notify(&identifier);
+        std::process::exit(0);
+    }
+
     let app = tauri::Builder::default()
+        // 单实例插件注册在**第一位**。
+        //
+        // 插件在这里只管"认亲"：第一个进程把 socket 绑上并听着，后来的进程把
+        // 参数交给它，它再把面板显示出来。
+        //
+        // 为什么还要排第一位？插件自己就是这么要求的（README 写着 "make sure
+        // that this plugin is registered first"），票里也是这么写的：认亲的通道
+        // 应该在别的插件动手之前准备好。
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            single_instance::on_second_instance(app);
+        }))
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             // 常驻菜单栏的应用不该在 Dock 里占位——没有窗口要跟用户切换。
@@ -170,7 +202,7 @@ pub fn run() {
         .on_window_event(|window, event| {
             panel::on_window_event(window.app_handle(), event);
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building tauri application");
 
     app.run(|app, event| {
