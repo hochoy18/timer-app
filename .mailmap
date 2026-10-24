@@ -1,12 +1,15 @@
-# 提交的作者名与 GitHub 账号对不上。
+# 提交一律用 GitHub 的 noreply 邮箱。
 #
-# 18 条提交里的作者邮箱是 cai.he@derbysoft.net，而这个邮箱在 GitHub 上登记在
-# 另一个账号（data-cai-he）名下。于是仓库的提交列表里，作者显示的是一个跟
-# 仓库主人（hochoy18）看起来毫无关系的陌生账号。
+# 仓库原先用 cai.he@derbysoft.net 提交，而那个邮箱在 GitHub 上登记在另一个
+# 账号（data-cai-he）名下——于是提交列表里，作者显示成一个跟仓库主人
+# （hochoy18）看着毫无关系的陌生账号。
 #
-# .mailmap 只改**显示**，不动历史：原始 commit 对象里的邮箱原样保留（API 照样
-# 读得到），改的是 git log / GitHub 提交列表上显示的名字。想连邮箱一起换掉
-# 只能重写历史——那件事的代价另说。
+# 现在改用 26376531+hochoy18@users.noreply.github.com：这是 GitHub 自动登记在
+# hochoy18 名下的地址，GitHub 按"邮箱 → 账号"链接提交时，会直接连回本人。
+# （GitHub 不看 .mailmap——它只认邮箱。所以真正起作用的是提交里那个邮箱。）
 #
-# 格式：<显示名> <显示邮箱> <提交里原来的邮箱>
-hochoy18 <cai.he@derbysoft.net> <cai.he@derbysoft.net>
+# 这一行是给"手滑用回公司邮箱"兜底的：万一哪次提交又带上了公司邮箱，git 本地
+# 会把它显示成下面这个身份。格式：
+#
+#   <显示名> <显示邮箱> <提交里原来的邮箱>
+hochoy18 <26376531+hochoy18@users.noreply.github.com> <cai.he@derbysoft.net>
