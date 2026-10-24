@@ -15,10 +15,20 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 # `image-png` 是运行时把 `icons/tray*.png` 解成 `Image` 用的（托盘图标要在
 # 常态 / 提醒态之间切，两张都得带进二进制）。
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+#
+# `macos-private-api` 是 `tauri.conf.json` 里 `macOSPrivateApi: true` 的对应开关：
+# 少了它，tauri-build 会直接报错——配置里开了的开关，依赖特性得对上。
+# （Tauri 2.12.1 起这组 API 已经默认开放，这个开关实质上是空转，但留着它
+#   语义更清楚：面板要的是透明背景。）
+tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
 tauri-plugin-notification = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+[dev-dependencies]
+# `tauri::test` 那套假运行时：给 IPC 层的测试用（面板按钮 → 状态机 → 推给前端
+# 的快照）。只在测试构建里打开，正式二进制不带上它。
+tauri = { version = "2", features = ["test"] }
 
 [features]
 # 默认启用，供 `tauri dev` 使用

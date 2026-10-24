@@ -11,6 +11,9 @@
 //! 这么切是因为托盘的行为大半是"什么状态下、点什么、按哪个键"，这些不启动
 //! app 就能验；真正只有真跑才看得见的只剩 macOS 的绘制效果。
 //!
+//! 面板窗口本身不在这一层，它住在 [`crate::panel`]——托盘只是**叫它**显示或
+//! 收起。
+//!
 //! 标题文案不在这一层：它是引擎算出来的一行字符串，和 [`crate::timer::clock::format_remaining`]
 //! 是同一条规则，住在引擎那边才不会被抄成第三份。
 
@@ -19,14 +22,13 @@ use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, Runtime};
 
+use crate::panel;
 use crate::timer::clock::ClockThread;
 use crate::timer::state::{Event, TimerState};
+use crate::on_main;
 
 /// 托盘图标 id。托盘句柄是按 id 从 Tauri 状态表里取的，所以它得是常量。
 const TRAY_ID: &str = "focus-timer-tray";
-
-/// 面板窗口的 label。
-const PANEL_LABEL: &str = "main";
 
 /// 菜单项 id。菜单项本身由 muda 持有，事件回调只给得出 id。
 const MENU_TOGGLE_PANEL: &str = "toggle-panel";
@@ -80,11 +82,6 @@ pub fn pause_item_enabled(state: TimerState) -> bool {
     state == TimerState::Working
 }
 
-/// 左键切换后面板应该是什么可见性。
-pub fn panel_visible_after_toggle(visible: bool) -> bool {
-    !visible
-}
-
 // ── Tauri 接线 ────────────────────────────────────────────────────────
 
 /// 建托盘：图标、菜单、左键 / 右键两套行为。
@@ -126,8 +123,7 @@ pub fn create<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
 /// 重建一个四项菜单的代价可以忽略，换来的是不必把 `MenuItem` 塞进 Tauri 的状态表
 /// （也就绕开了"这东西到底 Send + Sync 吗"的纠缠）。
 fn build_menu<R: Runtime>(app: &AppHandle<R>, state: TimerState) -> tauri::Result<Menu<R>> {
-    // 菜单里的"打开面板"和左键是同一个动作：面板已显示就收起来。规格只给了左键
-    // 定切换，面板自己的 ✕ 要等票 06 才落地，托盘得先能把它收回去。
+    // 菜单里的"打开面板"和左键是同一个动作：面板已显示就收起来。
     let toggle = MenuItem::with_id(app, MENU_TOGGLE_PANEL, "打开面板", true, None::<&str>)?;
     let pause = MenuItem::with_id(
         app,
@@ -182,36 +178,10 @@ pub fn apply_state<R: Runtime>(app: &AppHandle<R>, state: TimerState) {
     });
 }
 
-/// 显示面板。**只 `show()`，不 `setFocus()`。**
-///
-/// 不抢焦点是明确的产品决定：提醒要显眼，但不该打断手头正在做的事。
-pub fn show_panel<R: Runtime>(app: &AppHandle<R>) {
-    on_main(app, move |app| {
-        if let Some(window) = app.get_webview_window(PANEL_LABEL) {
-            let _ = window.show();
-        }
-    });
-}
-
-/// 左键 / 菜单的"打开面板"：已显示则隐藏，未显示则显示。
-pub fn toggle_panel<R: Runtime>(app: &AppHandle<R>) {
-    on_main(app, move |app| {
-        let Some(window) = app.get_webview_window(PANEL_LABEL) else {
-            return;
-        };
-        // 读可见性本身也要过一趟主线程，所以判断和动作得在同一个闭包里。
-        if panel_visible_after_toggle(window.is_visible().unwrap_or(false)) {
-            let _ = window.show();
-        } else {
-            let _ = window.hide();
-        }
-    });
-}
-
 /// 执行一个托盘动作。
 fn run_command<R: Runtime>(app: &AppHandle<R>, command: TrayCommand) {
     match command {
-        TrayCommand::TogglePanel => toggle_panel(app),
+        TrayCommand::TogglePanel => panel::toggle(app),
         TrayCommand::Pause => {
             if let Some(clock) = app.try_state::<ClockThread>() {
                 clock.apply(Event::Pause);
@@ -220,30 +190,6 @@ fn run_command<R: Runtime>(app: &AppHandle<R>, command: TrayCommand) {
         // 走 Tauri 的退出流程，`RunEvent::Exit` 里会停掉时钟线程。
         TrayCommand::Quit => app.exit(0),
     }
-}
-
-/// 把一段托盘改动投到主线程去做。
-///
-/// 托盘和窗口的 setter 内部是"投递到主线程 + 等它跑完"。在时钟线程里直接调，
-/// 就等于拿着状态机的锁去等主线程；而主线程正可能停在面板按钮或菜单点击里，
-/// 反过来等这把锁——两边互等，应用卡死。所以这一层一律 fire-and-forget：只投递，
-/// 不等。投递是 FIFO 的，标题、状态、快照、副作用的先后照样成立。
-///
-/// **这条只在 `tracing` 关着时成立。** `tauri-runtime-wry` 的 `emit` / `eval_script`
-/// 在 `tracing` feature 打开时会改用 channel + `rx.recv()` 等回执，也就是重新变回
-/// 阻塞的；`lib.rs` 里 `emit_state` 那一路就会跟着一起等。当前依赖图里没有
-/// `tracing`（`cargo tree -i tracing` 是空的），所以成立。**谁给 `tauri-runtime-wry`
-/// 打开 `tracing`，谁就得回头看一眼这里。**
-///
-/// 句柄由这里克隆一份交给闭包，免得每个调用点自己管"搬走之前先克隆"。
-fn on_main<R: Runtime>(
-    app: &AppHandle<R>,
-    task: impl FnOnce(AppHandle<R>) + Send + 'static,
-) {
-    let posted = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        task(posted)
-    });
 }
 
 #[cfg(test)]
@@ -304,11 +250,5 @@ mod tests {
             command_for_click(MouseButton::Middle, MouseButtonState::Up),
             None
         );
-    }
-
-    #[test]
-    fn toggling_the_panel_flips_its_visibility() {
-        assert!(panel_visible_after_toggle(false));
-        assert!(!panel_visible_after_toggle(true));
     }
 }

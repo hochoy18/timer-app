@@ -16,9 +16,9 @@ Status: resolved
 - [x] 前端侧通过校验：`npm run typecheck` 与 `npm run build` 均通过
 - [x] `cargo build` 通过且**零警告**
 - [x] `npm run tauri dev` 成功起起来，进程稳定运行 60 秒无 panic
-- [ ] 托盘图标能在菜单栏显示，左键点击可显示/隐藏窗口 ← 归 04 托盘
-- [ ] 窗口关闭按钮只隐藏窗口，不退出应用 ← 归 06 面板
-- [ ] 圆角透明窗口（`macOSPrivateApi` + `transparent`）← 归 06 面板
+- [x] 托盘图标能在菜单栏显示，左键点击可显示/隐藏窗口 ← 归 04 托盘（已由 04 落地）
+- [x] 窗口关闭按钮只隐藏窗口，不退出应用 ← 归 06 面板（已由 06 落地）
+- [x] 圆角透明窗口（`macOSPrivateApi` + `transparent`）← 归 06 面板（已由 06 落地）
 
 ## 背景
 

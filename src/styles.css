@@ -2,7 +2,10 @@
   font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue",
     Arial, sans-serif;
   color: #1c1e21;
-  background: #f6f7f9;
+  /* 窗口本身是透明的（见 `tauri.conf.json` 的 `transparent`），页面底色也得
+     跟着透明——不然一整块白会把圆角吃掉，卡片就白做了。
+     卡片自己的底色画在 `.panel` / `.boot` 上。 */
+  background: transparent;
   -webkit-font-smoothing: antialiased;
   user-select: none;
   cursor: default;
@@ -20,13 +23,28 @@ body,
   width: 100%;
   height: 100%;
   overflow: hidden;
+  background: transparent;
+}
+
+/* 卡片：不占满窗口，四周留出空当，投影才有地方落。
+   下面留得比上面厚（30px vs 12px）：CSS 的投影是往下洒的，底边多留一截，
+   投影才不会被窗口的下沿切掉。 */
+.panel,
+.boot {
+  height: calc(100% - 42px);
+  margin: 12px 12px 30px;
+  border-radius: 14px;
+  background: #f6f7f9;
+  /* 原生的窗口投影是方的（macOS 按窗口矩形算），跟圆角对不上，所以关掉它
+     （`tauri.conf.json` 的 `shadow: false`），改由 CSS 画圆角投影。 */
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.22);
+  overflow: hidden;
 }
 
 .boot {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 100vh;
   color: #868e96;
   font-size: 13px;
 }
@@ -34,9 +52,7 @@ body,
 .panel {
   display: flex;
   flex-direction: column;
-  height: 100vh;
   padding: 14px 16px 16px;
-  background: #f6f7f9;
 }
 
 .panel-workAlerting {
@@ -46,22 +62,8 @@ body,
 .panel-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   flex: 0 0 auto;
-}
-
-.badge {
-  padding: 3px 8px;
-  border-radius: 6px;
-  background: #e9ecef;
-  color: #495057;
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.panel-workAlerting .badge {
-  background: #ffe3e3;
-  color: #c92a2a;
 }
 
 .icon-btn {

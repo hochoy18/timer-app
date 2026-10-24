@@ -5,7 +5,7 @@ export function WorkPanel({ remaining }: { remaining: number }) {
   return (
     <div className="stage">
       <div className="time">{formatDuration(remaining)}</div>
-      <div className="status-label">专注工作中…</div>
+      <div className="status-label">专注工作中</div>
       <div className="actions">
         <button className="btn btn-secondary" onClick={() => void sendAction("pause")}>
           暂停

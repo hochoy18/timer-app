@@ -488,105 +488,9 @@ fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::timer::test_support::{cfg, MIN};
+    // 假分发器住在公共脚手架里——`lib.rs` 的 IPC 用例也要用它。
+    use crate::timer::test_support::{cfg, Call, FakeDispatcher, MIN};
     use std::sync::atomic::{AtomicBool, Ordering};
-
-    /// 记录所有副作用的假分发器。
-    #[derive(Default)]
-    struct FakeDispatcher {
-        calls: Mutex<Vec<Call>>,
-    }
-
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    enum Call {
-        Notify(String, String),
-        PlaySound,
-        ShowPanel,
-        SetTrayAlert(bool),
-        SetTrayTitle(String),
-        SetState(TimerState),
-        EmitState(TimerSnapshot),
-    }
-
-    impl FakeDispatcher {
-        fn calls(&self) -> Vec<Call> {
-            self.calls.lock().unwrap().clone()
-        }
-
-        fn titles(&self) -> Vec<String> {
-            self.calls()
-                .into_iter()
-                .filter_map(|c| match c {
-                    Call::SetTrayTitle(t) => Some(t),
-                    _ => None,
-                })
-                .collect()
-        }
-
-        fn states(&self) -> Vec<TimerState> {
-            self.calls()
-                .into_iter()
-                .filter_map(|c| match c {
-                    Call::SetState(s) => Some(s),
-                    _ => None,
-                })
-                .collect()
-        }
-
-        fn effects(&self) -> Vec<Call> {
-            self.calls()
-                .into_iter()
-                .filter(|c| {
-                    matches!(
-                        c,
-                        Call::Notify(..) | Call::PlaySound | Call::ShowPanel | Call::SetTrayAlert(..)
-                    )
-                })
-                .collect()
-        }
-    }
-
-    impl Dispatcher for FakeDispatcher {
-        fn notify(&self, title: &str, body: &str) {
-            self.calls
-                .lock()
-                .unwrap()
-                .push(Call::Notify(title.to_string(), body.to_string()));
-        }
-
-        fn play_sound(&self) {
-            self.calls.lock().unwrap().push(Call::PlaySound);
-        }
-
-        fn show_panel(&self) {
-            self.calls.lock().unwrap().push(Call::ShowPanel);
-        }
-
-        fn set_tray_alert(&self, alerting: bool) {
-            self.calls
-                .lock()
-                .unwrap()
-                .push(Call::SetTrayAlert(alerting));
-        }
-
-        fn set_tray_title(&self, title: &str) {
-            self.calls
-                .lock()
-                .unwrap()
-                .push(Call::SetTrayTitle(title.to_string()));
-        }
-
-        fn set_state(&self, state: TimerState) {
-            self.calls.lock().unwrap().push(Call::SetState(state));
-        }
-
-        fn emit_state(&self, snapshot: &TimerSnapshot) {
-            self.calls
-                .lock()
-                .unwrap()
-                .push(Call::EmitState(*snapshot));
-        }
-    }
 
     // ── 引擎：时间推进 ─────────────────────────────────────────────────
 
@@ -800,7 +704,7 @@ mod tests {
         let dispatcher = FakeDispatcher::default();
         let mut engine = TimerEngine::new(0, cfg());
         engine.tick(0);
-        dispatcher.calls.lock().unwrap().clear();
+        dispatcher.clear();
 
         dispatch(engine.tick(60 * MIN), &dispatcher);
 
@@ -824,6 +728,32 @@ mod tests {
         let out = engine.apply(Event::Pause, 20 * MIN);
         assert_eq!(engine.core().state, TimerState::Paused);
         assert_eq!(out.snapshot.unwrap().remaining_ms, 40 * MIN);
+    }
+
+    #[test]
+    fn a_user_action_pushes_the_new_state_right_away() {
+        // 面板上点一下按钮就该看到新状态，不能等下一个心跳。
+        //
+        // 这里锁的是"推出去"，不只是"算出来"：动作一应用，新快照就得跟着发到
+        // 前端。等下一秒的定时帧还能忍，等 250ms 的心跳就明显能感觉到卡顿了。
+        let dispatcher = Arc::new(FakeDispatcher::default());
+        let clock = ClockThread::start_with_interval(
+            Arc::clone(&dispatcher) as Arc<dyn Dispatcher>,
+            cfg(),
+            // 心跳慢到不可能在断言之前发生——这样"推出去"只能是动作带来的。
+            Duration::from_millis(60_000),
+        );
+
+        clock.apply(Event::Pause);
+
+        assert!(
+            dispatcher
+                .calls()
+                .iter()
+                .any(|c| matches!(c, Call::EmitState(s) if s.state == TimerState::Paused)),
+            "动作之后没有把新状态推给前端"
+        );
+        drop(clock);
     }
 
     #[test]

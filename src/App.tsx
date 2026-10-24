@@ -6,13 +6,6 @@ import { useNow } from "./hooks/useNow";
 import { useTimerState } from "./hooks/useTimerState";
 import { hidePanel } from "./lib/actions";
 
-const STATE_LABEL: Record<string, string> = {
-  working: "工作中",
-  paused: "已暂停",
-  workAlerting: "待确认",
-  breaking: "休息中",
-};
-
 export default function App() {
   const snapshot = useTimerState();
   const now = useNow(250);
@@ -30,10 +23,10 @@ export default function App() {
   return (
     <div className={`panel panel-${snapshot.state}`}>
       <header className="panel-header">
-        <span className="badge">{STATE_LABEL[snapshot.state] ?? snapshot.state}</span>
         <button
           className="icon-btn"
           title="隐藏面板（计时继续）"
+          aria-label="隐藏面板（计时继续）"
           onClick={() => void hidePanel()}
         >
           ✕

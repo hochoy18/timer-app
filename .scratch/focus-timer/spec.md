@@ -91,6 +91,7 @@
 ```
 timer-app/
 ├── package.json / vite.config.ts / tsconfig.json / index.html
+├── vitest.config.ts              # 前端测试（jsdom + testing-library）
 ├── src/                          # 前端：纯视图
 │   ├── main.tsx
 │   ├── App.tsx
@@ -100,7 +101,15 @@ timer-app/
 │   │   ├── PausedPanel.tsx
 │   │   ├── AlertPanel.tsx
 │   │   ├── BreakPanel.tsx
-│   │   └── OnboardingPanel.tsx
+│   │   └── OnboardingPanel.tsx   # 票 07 落地
+│   ├── hooks/
+│   │   ├── useTimerState.ts      # 订阅 timer://state
+│   │   └── useNow.ts             # 250ms 的本地时钟
+│   ├── lib/
+│   │   ├── actions.ts            # 四个动作 → invoke("timer_action")
+│   │   └── format.ts             # MM:SS / H:MM:SS
+│   ├── __tests__/panel.test.tsx  # 面板四态 + 按钮（票 06）
+│   ├── test/setup.ts
 │   └── styles.css
 ├── src-tauri/
 │   ├── Cargo.toml
@@ -109,12 +118,13 @@ timer-app/
 │   ├── icons/
 │   └── src/
 │       ├── main.rs
-│       ├── lib.rs
+│       ├── lib.rs                # 命令 + Tauri 接线 + IPC 层的端到端用例
 │       ├── timer/
-│       │   ├── mod.rs
+│       │   ├── mod.rs            # 公共脚手架（测试用）
 │       │   ├── state.rs          # 纯函数状态机 + cargo test
 │       │   └── clock.rs          # 权威时钟线程
 │       ├── tray.rs
+│       ├── panel.rs              # 面板窗口：显示 / 隐藏 / 关掉不退出
 │       ├── notify.rs             # 系统通知 + 系统音效
 │       └── config.rs             # 时长常量 + dev 加速开关
 ├── CONTEXT.md
@@ -141,7 +151,12 @@ interface TimerSnapshot {
 
 **每秒一帧而不是仅状态变化**：前端用自己的 `Date.now()` 算剩余，Rust 用 `SystemTime::now()`，两个时钟可能差几秒。每秒推一帧等于持续对时，前端每帧都能把显示拉回 Rust 的真值；改成仅状态变化就没有任何纠偏机制了，那点偏差会一直留在面板上。代价只是每秒一条 IPC 消息。
 
-**前端 → Rust**（`invoke("timer_action", { action })`），`action ∈ { "pause" | "resume" | "restart" | "acknowledge" }`。
+**前端 → Rust**（两条命令）：
+
+- `invoke("timer_action", { action })`，`action ∈ { "pause" | "resume" | "restart" | "acknowledge" }`——面板上的四个动作按钮。
+- `invoke("hide_panel")`——面板右上角的 ✕。**只隐藏窗口，不退出应用**：计时在时钟线程里继续走，托盘还在（CONTEXT.md 的"面板"）。这条跟 `timer_action` 分开，是因为它根本不碰状态机。
+
+窗口右上角的 ✕ 和系统级的关闭（⌘W、窗口的关闭按钮）走同一条路：拦住关闭、改为隐藏。面板是应用里唯一的窗口，放任它被关掉的话，Tauri 会因为"一个窗口都不剩"而退出应用，计时就断了。
 
 前端每 250ms 用本地 `setInterval` 做插值渲染：`remaining = max(0, deadlineMs - Date.now())`。`deadlineMs` 为 `null`（提醒态）或暂停态时改用快照里的 `remainingMs`。
 
@@ -149,7 +164,7 @@ interface TimerSnapshot {
 
 - **标题**：剩余时间 `MM:SS`，超过 1 小时则 `H:MM:SS`（`WORK_ALERTING` 时前缀一个红点 `🔴`）
 - **图标**：常态图标（模板图，跟随菜单栏明暗）；`WORK_ALERTING` 时换醒目图标（彩色，不走模板）
-- **菜单**：`打开面板` / `暂停`（仅 `WORKING` 可用）/ `退出`。菜单里的"打开面板"与左键点击是同一个动作——面板已显示就收起来（面板自己的 ✕ 要等票 06 才落地，托盘得先能把它收回去）
+- **菜单**：`打开面板` / `暂停`（仅 `WORKING` 可用）/ `退出`。菜单里的"打开面板"与左键点击是同一个动作——面板已显示就收起来
 - **左键点击**：面板已显示则隐藏，未显示则显示（`show()` 但**不** `setFocus()`，不抢焦点）
 
 托盘标题与面板显示的剩余时间是同一个数字，因此 `format_remaining`（Rust）和 `formatDuration`（前端）必须遵守同一条规则：`≤ 60 分钟 → MM:SS`（60 分钟写作 `60:00`），`> 60 分钟 → H:MM:SS`。两份格式化器，改一处就要改另一处。
