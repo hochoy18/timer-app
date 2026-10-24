@@ -116,6 +116,9 @@ docs/install.md       打包与安装
 [`.scratch/focus-timer/issues/`](.scratch/focus-timer/issues/)——10 张，全 `resolved`。
 §9 的验收清单有 14 条，13 条有自动化兜着，哪条由谁验的写在票 10 里。
 
+同目录下的 `conversation_1.md` / `conversation_2.md` 是这个项目开头那两轮设计
+对话的原始记录——领域词汇和实现方案就是从那儿来的。
+
 ## 本期不做
 
 开机自启、时长可配置、计时状态持久化、跨平台、签名与公证、自动更新、历史统计。
